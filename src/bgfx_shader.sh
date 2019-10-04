@@ -36,7 +36,10 @@
 #   define ARRAY_END() }
 #endif // BGFX_SHADER_LANGUAGE_GLSL
 
-#if BGFX_SHADER_LANGUAGE_HLSL || BGFX_SHADER_LANGUAGE_PSSL || BGFX_SHADER_LANGUAGE_SPIRV || BGFX_SHADER_LANGUAGE_METAL
+#if BGFX_SHADER_LANGUAGE_HLSL \
+ || BGFX_SHADER_LANGUAGE_PSSL \
+ || BGFX_SHADER_LANGUAGE_SPIRV \
+ || BGFX_SHADER_LANGUAGE_METAL
 #	define CONST(_x) static const _x
 #	define dFdx(_x) ddx(_x)
 #	define dFdy(_y) ddy(-_y)
@@ -372,9 +375,9 @@ vec3 bgfxTextureSize(BgfxSampler3D _sampler, int _lod)
 #		define shadow2DProj(_sampler, _coord) bgfxShadow2DProj(_sampler, _coord)
 
 #		define SAMPLER2DARRAYSHADOW(_name, _reg) \
-			SamplerComparisonState _name ## SamplerComparison : REGISTER(s, _reg); \
-			Texture2DArray _name ## Texture : REGISTER(t, _reg); \
-			BgfxSampler2DArrayShadow _name = { _name ## SamplerComparison, _name ## Texture }
+			uniform SamplerComparisonState _name ## SamplerComparison : REGISTER(s, _reg); \
+			uniform Texture2DArray _name ## Texture : REGISTER(t, _reg); \
+			static BgfxSampler2DArrayShadow _name = { _name ## SamplerComparison, _name ## Texture }
 #		define sampler2DArrayShadow BgfxSampler2DArrayShadow
 #		define shadow2DArray(_sampler, _coord) bgfxShadow2DArray(_sampler, _coord)
 

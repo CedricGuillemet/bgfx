@@ -22,6 +22,7 @@ Supported rendering backends:
  * OpenGL 3.1+
  * OpenGL ES 2
  * OpenGL ES 3.1
+ * Vulkan
  * WebGL 1.0
  * WebGL 2.0
 
@@ -78,8 +79,8 @@ Languages:
 [Tools](https://bkaradzic.github.io/bgfx/tools.html)
 ----------------------------------------------------
 
-Who is using it? #madewithbgfx
-------------------------------
+Who is using it? [#madewithbgfx](https://twitter.com/search?q=%23madewithbgfx&f=live)
+-------------------------------------------------------------------------------------
 
 ## Airmech
 
