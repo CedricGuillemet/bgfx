@@ -279,7 +279,7 @@ namespace bgfx { namespace mtl
 		id<MTLLibrary> newLibraryWithData(const void* _data)
 		{
 			NSError* error;
-			id<MTLLibrary> lib =  [m_obj newLibraryWithData:(dispatch_data_t)_data error:&error];
+			id<MTLLibrary> lib =  [m_obj newLibraryWithData:(__bridge dispatch_data_t)_data error:&error];
 			BX_WARN(NULL == error
 				, "newLibraryWithData failed: %s"
 				, [error.localizedDescription cStringUsingEncoding:NSASCIIStringEncoding]
@@ -711,12 +711,12 @@ namespace bgfx { namespace mtl
 	//helper functions
 	inline void release(NSObject* _obj)
 	{
-		[_obj release];
+		//[_obj release];
 	}
 
 	inline void retain(NSObject* _obj)
 	{
-		[_obj retain];
+		//[_obj retain];
 	}
 
 	inline const char* utf8String(NSString* _str)
@@ -726,7 +726,6 @@ namespace bgfx { namespace mtl
 
 #define MTL_RELEASE(_obj)        \
 			BX_MACRO_BLOCK_BEGIN \
-				[_obj release];  \
 				_obj = nil;      \
 			BX_MACRO_BLOCK_END
 

@@ -382,7 +382,7 @@ namespace bgfx { namespace mtl
 			bx::memSet(m_uniforms, 0, sizeof(m_uniforms) );
 			bx::memSet(&m_resolution, 0, sizeof(m_resolution) );
 
-			m_device = (id<MTLDevice>)g_platformData.context;
+			m_device = (__bridge id<MTLDevice>)g_platformData.context;
 
 			if (NULL == m_device)
 			{
@@ -661,7 +661,7 @@ namespace bgfx { namespace mtl
 			m_occlusionQuery.preReset();
 			m_gpuTimer.init();
 
-			g_internalData.context = m_device;
+			g_internalData.context = &m_device;
 
 			return true;
 		}
@@ -2977,7 +2977,7 @@ namespace bgfx { namespace mtl
 	{
 		if (NULL != NSClassFromString(@"MTKView") )
 		{
-			MTKView *view = (MTKView *)_nwh;
+			MTKView *view = (__bridge MTKView *)_nwh;
 			if (NULL != view && [view isKindOfClass:NSClassFromString(@"MTKView")])
 			{
 				m_metalLayer = (CAMetalLayer *)view.layer;
@@ -2989,7 +2989,7 @@ namespace bgfx { namespace mtl
 			if (NULL == m_metalLayer)
 #if BX_PLATFORM_IOS
 			{
-				CAMetalLayer* metalLayer = (CAMetalLayer*)_nwh;
+				CAMetalLayer* metalLayer = (__bridge CAMetalLayer*)_nwh;
 				if (NULL == metalLayer
 				|| ![metalLayer isKindOfClass:NSClassFromString(@"CAMetalLayer")])
 				{
