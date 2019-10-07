@@ -3953,7 +3953,7 @@ namespace bgfx { namespace d3d12
 		uint8_t numStreams = 0;
 		_outNumVertices = _draw.m_numVertices;
 
-		if (UINT32_MAX != _draw.m_streamMask)
+		if (UINT8_MAX != _draw.m_streamMask)
 		{
 			for (uint32_t idx = 0, streamMask = _draw.m_streamMask
 				; 0 != streamMask
@@ -6257,7 +6257,7 @@ namespace bgfx { namespace d3d12
 					const VertexLayout* layouts[BGFX_CONFIG_MAX_VERTEX_STREAMS];
 
 					uint8_t numStreams = 0;
-					if (UINT32_MAX != draw.m_streamMask)
+					if (UINT8_MAX != draw.m_streamMask)
 					{
 						for (uint32_t idx = 0, streamMask = draw.m_streamMask
 							; 0 != streamMask

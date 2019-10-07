@@ -2857,7 +2857,7 @@ namespace bgfx { namespace d3d11
 			{
 				uint32_t cull = (_state&BGFX_STATE_CULL_MASK)>>BGFX_STATE_CULL_SHIFT;
 
-#if BX_PLATFORM_WINDOWS || BX_PLATFORM_WINRT
+#if BX_PLATFORM_WINDOWS
 				if (m_deviceInterfaceVersion >= 3)
 				{
 					D3D11_RASTERIZER_DESC2 desc;
@@ -2881,7 +2881,7 @@ namespace bgfx { namespace d3d11
 					DX_CHECK(device3->CreateRasterizerState2(&desc, reinterpret_cast<ID3D11RasterizerState2**>(&rs) ) );
 				}
 				else
-#endif // BX_PLATFORM_WINDOWS || BX_PLATFORM_WINRT
+#endif // BX_PLATFORM_WINDOWS
 				{
 					D3D11_RASTERIZER_DESC desc;
 					desc.FillMode = _wireframe ? D3D11_FILL_WIREFRAME : D3D11_FILL_SOLID;
@@ -5883,7 +5883,7 @@ namespace bgfx { namespace d3d11
 					uint32_t numVertices = draw.m_numVertices;
 					uint8_t  numStreams  = 0;
 
-					if (UINT32_MAX != draw.m_streamMask)
+					if (UINT8_MAX != draw.m_streamMask)
 					{
 						for (uint32_t idx = 0, streamMask = draw.m_streamMask
 							; 0 != streamMask
