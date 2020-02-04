@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2019 Branimir Karadzic. All rights reserved.
+ * Copyright 2011-2020 Branimir Karadzic. All rights reserved.
  * License: https://github.com/bkaradzic/bgfx/blob/master/LICENSE
  */
 
@@ -527,6 +527,40 @@ public static partial class bgfx
 		DiscardStencil         = 0x1000,
 		DiscardColorMask       = 0x07f8,
 		DiscardMask            = 0x1ff8,
+	}
+	
+	[Flags]
+	public enum DiscardFlags : uint
+	{
+		/// <summary>
+		/// Discard only Index Buffer
+		/// </summary>
+		IndexBuffer            = 0x00000001,
+	
+		/// <summary>
+		/// Discard only Vertex Streams
+		/// </summary>
+		VertexStreams          = 0x00000002,
+	
+		/// <summary>
+		/// Discard only texture samplers
+		/// </summary>
+		TextureSamplers        = 0x00000004,
+	
+		/// <summary>
+		/// Discard only Compute shader related state
+		/// </summary>
+		Compute                = 0x00000008,
+	
+		/// <summary>
+		/// Discard only state
+		/// </summary>
+		State                  = 0x00000010,
+	
+		/// <summary>
+		/// Discard every rendering states
+		/// </summary>
+		All                    = 0x0000001f,
 	}
 	
 	[Flags]
@@ -3787,11 +3821,13 @@ public static partial class bgfx
 	public static extern unsafe void encoder_dispatch_indirect(Encoder* _this, ushort _id, ProgramHandle _program, IndirectBufferHandle _indirectHandle, ushort _start, ushort _num);
 	
 	/// <summary>
-	/// Discard all previously set state for draw or compute call.
+	/// Discard previously set state for draw or compute call.
 	/// </summary>
 	///
+	/// <param name="_flags">Draw/compute states to discard.</param>
+	///
 	[DllImport(DllName, EntryPoint="bgfx_encoder_discard", CallingConvention = CallingConvention.Cdecl)]
-	public static extern unsafe void encoder_discard(Encoder* _this);
+	public static extern unsafe void encoder_discard(Encoder* _this, byte _flags);
 	
 	/// <summary>
 	/// Blit 2D texture region between two 2D textures.
@@ -4300,11 +4336,13 @@ public static partial class bgfx
 	public static extern unsafe void dispatch_indirect(ushort _id, ProgramHandle _program, IndirectBufferHandle _indirectHandle, ushort _start, ushort _num);
 	
 	/// <summary>
-	/// Discard all previously set state for draw or compute call.
+	/// Discard previously set state for draw or compute call.
 	/// </summary>
 	///
+	/// <param name="_flags">Draw/compute states to discard.</param>
+	///
 	[DllImport(DllName, EntryPoint="bgfx_discard", CallingConvention = CallingConvention.Cdecl)]
-	public static extern unsafe void discard();
+	public static extern unsafe void discard(byte _flags);
 	
 	/// <summary>
 	/// Blit 2D texture region between two 2D textures.

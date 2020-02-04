@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2019 Branimir Karadzic. All rights reserved.
+ * Copyright 2011-2020 Branimir Karadzic. All rights reserved.
  * License: https://github.com/bkaradzic/bgfx#license-bsd-2-clause
  */
 
@@ -1514,8 +1514,6 @@ namespace bgfx { namespace gl
 			return false;
 		}
 
-BX_TRACE("%d, %d, %d, %s", _array, _srgb, _mipAutogen, getName(_format) );
-
 		const GLenum target = _array
 			? GL_TEXTURE_2D_ARRAY
 			: GL_TEXTURE_2D
@@ -2086,7 +2084,7 @@ BX_TRACE("%d, %d, %d, %s", _array, _srgb, _mipAutogen, getName(_format) );
 							s_textureFilter[TextureFormat::RGBA32F] = linear32F;
 						}
 
-						if (BX_ENABLED(BX_PLATFORM_IOS) || BX_ENABLED(BX_PLATFORM_EMSCRIPTEN))
+						if (BX_ENABLED(BX_PLATFORM_EMSCRIPTEN))
 						{
 							setTextureFormat(TextureFormat::D16,   GL_DEPTH_COMPONENT, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT);
 							setTextureFormat(TextureFormat::D24S8, GL_DEPTH_STENCIL,   GL_DEPTH_STENCIL,   GL_UNSIGNED_INT_24_8);
@@ -5377,7 +5375,8 @@ BX_TRACE("%d, %d, %d, %s", _array, _srgb, _mipAutogen, getName(_format) );
 
 		if (0 != m_id)
 		{
-			if (GL_COMPUTE_SHADER != m_type)
+			if (GL_COMPUTE_SHADER != m_type
+			&&  0 != bx::strCmp(code, "#version 430", 12) ) // #2000
 			{
 				int32_t tempLen = code.getLength() + (4<<10);
 				char* temp = (char*)alloca(tempLen);
@@ -5758,7 +5757,7 @@ BX_TRACE("%d, %d, %d, %s", _array, _srgb, _mipAutogen, getName(_format) );
 					{
 						bx::write(&writer, code);
 					}
-					
+
 					bx::write(&writer, '\0');
 				}
 				else if (BX_ENABLED(BGFX_CONFIG_RENDERER_OPENGL   >= 31)
@@ -5875,7 +5874,7 @@ BX_TRACE("%d, %d, %d, %s", _array, _srgb, _mipAutogen, getName(_format) );
 
 				code.set(temp);
 			}
-			else // GL_COMPUTE_SHADER
+			else if (GL_COMPUTE_SHADER == m_type)
 			{
 				int32_t codeLen = (int32_t)bx::strLen(code);
 				int32_t tempLen = codeLen + (4<<10);
@@ -7196,6 +7195,8 @@ BX_TRACE("%d, %d, %d, %s", _array, _srgb, _mipAutogen, getName(_format) );
 
 					{
 						bool diffStreamHandles = false;
+						bool diffIndexBuffer = false;
+
 						for (uint32_t idx = 0, streamMask = draw.m_streamMask
 							; 0 != streamMask
 							; streamMask >>= 1, idx += 1
@@ -7253,6 +7254,8 @@ BX_TRACE("%d, %d, %d, %s", _array, _srgb, _mipAutogen, getName(_format) );
 							{
 								GL_CHECK(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0) );
 							}
+
+							diffIndexBuffer = true;
 						}
 
 						if (0 != currentState.m_streamMask)
@@ -7309,7 +7312,10 @@ BX_TRACE("%d, %d, %d, %s", _array, _srgb, _mipAutogen, getName(_format) );
 								}
 
 								program.bindAttributesEnd();
+							}
 
+							if (bindAttribs || diffStartVertex || diffIndexBuffer)
+							{
 								if (isValid(draw.m_instanceDataBuffer) )
 								{
 									GL_CHECK(glBindBuffer(GL_ARRAY_BUFFER, m_vertexBuffers[draw.m_instanceDataBuffer.idx].m_id) );

@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2019 Branimir Karadzic. All rights reserved.
+ * Copyright 2011-2020 Branimir Karadzic. All rights reserved.
  * License: https://github.com/bkaradzic/bgfx#license-bsd-2-clause
  */
 
@@ -3780,9 +3780,9 @@ namespace bgfx
 		BGFX_ENCODER(dispatch(_id, _program, _indirectHandle, _start, _num) );
 	}
 
-	void Encoder::discard()
+	void Encoder::discard(uint8_t flags)
 	{
-		BGFX_ENCODER(discard() );
+		BGFX_ENCODER(discard(flags) );
 	}
 
 	void Encoder::blit(ViewId _id, TextureHandle _dst, uint16_t _dstX, uint16_t _dstY, TextureHandle _src, uint16_t _srcX, uint16_t _srcY, uint16_t _width, uint16_t _height)
@@ -4992,10 +4992,10 @@ namespace bgfx
 		s_ctx->m_encoder0->dispatch(_id, _handle, _indirectHandle, _start, _num);
 	}
 
-	void discard()
+	void discard(uint8_t flags)
 	{
 		BGFX_CHECK_API_THREAD();
-		s_ctx->m_encoder0->discard();
+		s_ctx->m_encoder0->discard(flags);
 	}
 
 	void blit(ViewId _id, TextureHandle _dst, uint16_t _dstX, uint16_t _dstY, TextureHandle _src, uint16_t _srcX, uint16_t _srcY, uint16_t _width, uint16_t _height)

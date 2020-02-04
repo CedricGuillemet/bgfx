@@ -57,8 +57,8 @@ Languages:
  * [Lightweight Java Game Library 3 bindings](https://github.com/LWJGL/lwjgl3)
  * [Lua language API bindings](https://github.com/cloudwu/lua-bgfx)
  * [Nim language API bindings](https://github.com/Halsys/nim-bgfx)
- * [Python language API bindings](https://github.com/jnadro/pybgfx#pybgf)
- * [Python language API bindings (alternative)](https://github.com/fbertola/bgfx-python#-----bgfx-python--)
+ * [Python language API bindings #1](https://github.com/fbertola/bgfx-python#-----bgfx-python--)
+ * [Python language API bindings #2](https://github.com/jnadro/pybgfx#pybgfx)
  * [Rust language API bindings](https://github.com/rhoot/bgfx-rs)
  * [Swift language API bindings](https://github.com/stuartcarnie/SwiftBGFX)
 
@@ -372,7 +372,7 @@ An open source reimplementation of the game Black & White (2001).
 <img align="right" src="http://opensource.org/trademarks/opensource/OSI-Approved-License-100x137.png">
 </a>
 
-	Copyright 2010-2019 Branimir Karadzic
+	Copyright 2010-2020 Branimir Karadzic
 	
 	Redistribution and use in source and binary forms, with or without modification,
 	are permitted provided that the following conditions are met:
