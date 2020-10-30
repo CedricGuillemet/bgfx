@@ -24,12 +24,21 @@ struct PosColorVertex
 			.add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
 			.add(bgfx::Attrib::Color0,   4, bgfx::AttribType::Uint8, true)
 			.end();
+
+		ms_layoutTest
+			.begin()
+			.add(bgfx::Attrib::Normal, 3, bgfx::AttribType::Float)
+			.end();
 	};
 
 	static bgfx::VertexLayout ms_layout;
+
+	static bgfx::VertexLayout ms_layoutTest;
 };
 
+bgfx::VertexLayoutHandle layoutHandle;
 bgfx::VertexLayout PosColorVertex::ms_layout;
+bgfx::VertexLayout PosColorVertex::ms_layoutTest;
 
 static PosColorVertex s_cubeVertices[] =
 {
@@ -173,6 +182,9 @@ public:
 			, PosColorVertex::ms_layout
 			);
 
+		layoutHandle = bgfx::createVertexLayout(PosColorVertex::ms_layoutTest);
+
+
 		// Create static index buffer for triangle list rendering.
 		m_ibh[0] = bgfx::createIndexBuffer(
 			// Static data can be passed with bgfx::makeRef
@@ -213,6 +225,8 @@ public:
 
 	virtual int shutdown() override
 	{
+		bgfx::destroy(layoutHandle);
+
 		imguiDestroy();
 
 		// Cleanup.
