@@ -1680,6 +1680,36 @@ namespace bgfx
 		BX_TRACE("");
 	}
 
+	void dump(const Resolution& _resolution)
+	{
+		const uint32_t reset = _resolution.reset;
+		const uint32_t msaa = (reset&BGFX_RESET_MSAA_MASK)>>BGFX_RESET_MSAA_SHIFT;
+		BX_UNUSED(reset, msaa);
+
+		BX_TRACE("Reset back-buffer swap chain:");
+		BX_TRACE("\t%dx%d, format: %s, numBackBuffers: %d, maxFrameLatency: %d"
+			, _resolution.width
+			, _resolution.height
+			, TextureFormat::Count == _resolution.format
+				? "*default*"
+				: bimg::getName(bimg::TextureFormat::Enum(_resolution.format) )
+			, _resolution.numBackBuffers
+			, _resolution.maxFrameLatency
+			);
+		BX_TRACE("\t[%c] MSAAx%d", 0 != msaa ? 'x' : ' ', 1<<msaa);
+		BX_TRACE("\t[%c] Fullscreen",         0 != (reset & BGFX_RESET_FULLSCREEN)         ? 'x' : ' ');
+		BX_TRACE("\t[%c] V-sync",             0 != (reset & BGFX_RESET_VSYNC)              ? 'x' : ' ');
+		BX_TRACE("\t[%c] Max Anisotropy",     0 != (reset & BGFX_RESET_MAXANISOTROPY)      ? 'x' : ' ');
+		BX_TRACE("\t[%c] Capture",            0 != (reset & BGFX_RESET_CAPTURE)            ? 'x' : ' ');
+		BX_TRACE("\t[%c] Flush After Render", 0 != (reset & BGFX_RESET_FLUSH_AFTER_RENDER) ? 'x' : ' ');
+		BX_TRACE("\t[%c] Flip After Render",  0 != (reset & BGFX_RESET_FLIP_AFTER_RENDER)  ? 'x' : ' ');
+		BX_TRACE("\t[%c] sRGB Back Buffer",   0 != (reset & BGFX_RESET_SRGB_BACKBUFFER)    ? 'x' : ' ');
+		BX_TRACE("\t[%c] HDR10",              0 != (reset & BGFX_RESET_HDR10)              ? 'x' : ' ');
+		BX_TRACE("\t[%c] Hi-DPI",             0 != (reset & BGFX_RESET_HIDPI)              ? 'x' : ' ');
+		BX_TRACE("\t[%c] Depth Clamp",        0 != (reset & BGFX_RESET_DEPTH_CLAMP)        ? 'x' : ' ');
+		BX_TRACE("\t[%c] Suspend",            0 != (reset & BGFX_RESET_SUSPEND)            ? 'x' : ' ');
+	}
+
 	TextureFormat::Enum getViableTextureFormat(const bimg::ImageContainer& _imageContainer)
 	{
 		const uint32_t formatCaps = g_caps.formats[_imageContainer.m_format];
@@ -1798,6 +1828,9 @@ namespace bgfx
 
 		m_init = _init;
 		m_init.resolution.reset &= ~BGFX_RESET_INTERNAL_FORCE;
+		m_init.resolution.numBackBuffers  = bx::clamp<uint8_t>(_init.resolution.numBackBuffers, 2, BGFX_CONFIG_MAX_BACK_BUFFERS);
+		m_init.resolution.maxFrameLatency = bx::min<uint8_t>(_init.resolution.maxFrameLatency, 3);
+		dump(m_init.resolution);
 
 		if (g_platformData.ndt          == NULL
 		&&  g_platformData.nwh          == NULL
@@ -3351,13 +3384,14 @@ namespace bgfx
 	{
 	}
 
-	void Attachment::init(TextureHandle _handle, Access::Enum _access, uint16_t _layer, uint16_t _mip, uint8_t _resolve)
+	void Attachment::init(TextureHandle _handle, Access::Enum _access, uint16_t _layer, uint16_t _numLayers, uint16_t _mip, uint8_t _resolve)
 	{
-		access  = _access;
-		handle  = _handle;
-		mip     = _mip;
-		layer   = _layer;
-		resolve = _resolve;
+		access    = _access;
+		handle    = _handle;
+		mip       = _mip;
+		layer     = _layer;
+		numLayers = _numLayers;
+		resolve   = _resolve;
 	}
 
 	bool init(const Init& _userInit)
@@ -3896,9 +3930,9 @@ namespace bgfx
 		dstHeight = bx::min<uint32_t>(dstHeight, _dstY + _height) - _dstY;
 		dstDepth  = bx::min<uint32_t>(dstDepth,  _dstZ + _depth ) - _dstZ;
 
-		uint16_t width  = bx::min<uint16_t>(srcWidth,  dstWidth);
-		uint16_t height = bx::min<uint16_t>(srcHeight, dstHeight);
-		uint16_t depth  = bx::min<uint16_t>(srcDepth,  dstDepth);
+		const uint16_t width  = uint16_t(bx::min(srcWidth,  dstWidth ) );
+		const uint16_t height = uint16_t(bx::min(srcHeight, dstHeight) );
+		const uint16_t depth  = uint16_t(bx::min(srcDepth,  dstDepth ) );
 
 		BGFX_ENCODER(blit(_id, _dst, _dstMip, _dstX, _dstY, _dstZ, _src, _srcMip, _srcX, _srcY, _srcZ, width, height, depth) );
 	}
@@ -4635,7 +4669,7 @@ namespace bgfx
 		for (uint8_t ii = 0; ii < _num; ++ii)
 		{
 			Attachment& at = attachment[ii];
-			at.init(_handles[ii], Access::Write, 0, 0, BGFX_RESOLVE_AUTO_GEN_MIPS);
+			at.init(_handles[ii], Access::Write, 0, 1, 0, BGFX_RESOLVE_AUTO_GEN_MIPS);
 		}
 		return createFrameBuffer(_num, attachment, _destroyTextures);
 	}
