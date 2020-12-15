@@ -43,7 +43,7 @@ static PosColorVertex s_cubeVertices[] =
 	{ 1.0f, -1.0f, -1.0f, 0xffffffff },
 };
 
-static const uint16_t s_cubeTriList[] =
+static const uint16_t s_cubeTriList16[] =
 {
 	0, 1, 2, // 0
 	1, 3, 2,
@@ -59,48 +59,20 @@ static const uint16_t s_cubeTriList[] =
 	6, 3, 7,
 };
 
-static const uint16_t s_cubeTriStrip[] =
+static const uint32_t s_cubeTriList32[] =
 {
-	0, 1, 2,
-	3,
-	7,
-	1,
-	5,
-	0,
-	4,
-	2,
-	6,
-	7,
-	4,
-	5,
-};
-
-static const uint16_t s_cubeLineList[] =
-{
-	0, 1,
-	0, 2,
-	0, 4,
-	1, 3,
-	1, 5,
-	2, 3,
-	2, 6,
-	3, 7,
-	4, 5,
-	4, 6,
-	5, 7,
-	6, 7,
-};
-
-static const uint16_t s_cubeLineStrip[] =
-{
-	0, 2, 3, 1, 5, 7, 6, 4,
-	0, 2, 6, 4, 5, 7, 3, 1,
-	0,
-};
-
-static const uint16_t s_cubePoints[] =
-{
-	0, 1, 2, 3, 4, 5, 6, 7
+	0, 1, 2, // 0
+	1, 3, 2,
+	4, 6, 5, // 2
+	5, 6, 7,
+	0, 2, 4, // 4
+	4, 2, 6,
+	1, 5, 3, // 6
+	5, 7, 3,
+	0, 4, 1, // 8
+	4, 5, 1,
+	2, 3, 6, // 10
+	6, 3, 7,
 };
 
 static const char* s_ptNames[]
@@ -111,16 +83,6 @@ static const char* s_ptNames[]
 	"Line Strip",
 	"Points",
 };
-
-static const uint64_t s_ptState[]
-{
-	UINT64_C(0),
-	BGFX_STATE_PT_TRISTRIP,
-	BGFX_STATE_PT_LINES,
-	BGFX_STATE_PT_LINESTRIP,
-	BGFX_STATE_PT_POINTS,
-};
-BX_STATIC_ASSERT(BX_COUNTOF(s_ptState) == BX_COUNTOF(s_ptNames) );
 
 class ExampleCubes : public entry::AppI
 {
@@ -174,34 +136,17 @@ public:
 			);
 
 		// Create static index buffer for triangle list rendering.
-		m_ibh[0] = bgfx::createIndexBuffer(
+		m_ibh[0] = bgfx::createDynamicIndexBuffer(
 			// Static data can be passed with bgfx::makeRef
-			bgfx::makeRef(s_cubeTriList, sizeof(s_cubeTriList) )
-			);
+			bgfx::makeRef(s_cubeTriList16, sizeof(s_cubeTriList16))
+		);
 
 		// Create static index buffer for triangle strip rendering.
-		m_ibh[1] = bgfx::createIndexBuffer(
+		m_ibh[1] = bgfx::createDynamicIndexBuffer(
 			// Static data can be passed with bgfx::makeRef
-			bgfx::makeRef(s_cubeTriStrip, sizeof(s_cubeTriStrip) )
-			);
-
-		// Create static index buffer for line list rendering.
-		m_ibh[2] = bgfx::createIndexBuffer(
-			// Static data can be passed with bgfx::makeRef
-			bgfx::makeRef(s_cubeLineList, sizeof(s_cubeLineList) )
-			);
-
-		// Create static index buffer for line strip rendering.
-		m_ibh[3] = bgfx::createIndexBuffer(
-			// Static data can be passed with bgfx::makeRef
-			bgfx::makeRef(s_cubeLineStrip, sizeof(s_cubeLineStrip) )
-			);
-
-		// Create static index buffer for point list rendering.
-		m_ibh[4] = bgfx::createIndexBuffer(
-			// Static data can be passed with bgfx::makeRef
-			bgfx::makeRef(s_cubePoints, sizeof(s_cubePoints) )
-			);
+			bgfx::makeRef(s_cubeTriList32, sizeof(s_cubeTriList32)),
+			BGFX_BUFFER_INDEX32
+		);
 
 		// Create program from shaders.
 		m_program = loadProgram("vs_cubes", "fs_cubes");
@@ -216,7 +161,7 @@ public:
 		imguiDestroy();
 
 		// Cleanup.
-		for (uint32_t ii = 0; ii < BX_COUNTOF(m_ibh); ++ii)
+		for (uint32_t ii = 0; ii < 2; ++ii)
 		{
 			bgfx::destroy(m_ibh[ii]);
 		}
@@ -293,7 +238,6 @@ public:
 			// if no other draw calls are submitted to view 0.
 			bgfx::touch(0);
 
-			bgfx::IndexBufferHandle ibh = m_ibh[m_pt];
 			uint64_t state = 0
 				| (m_r ? BGFX_STATE_WRITE_R : 0)
 				| (m_g ? BGFX_STATE_WRITE_G : 0)
@@ -303,13 +247,12 @@ public:
 				| BGFX_STATE_DEPTH_TEST_LESS
 				| BGFX_STATE_CULL_CW
 				| BGFX_STATE_MSAA
-				| s_ptState[m_pt]
 				;
 
 			// Submit 11x11 cubes.
-			for (uint32_t yy = 0; yy < 11; ++yy)
+			for (uint32_t yy = 0; yy < 1; ++yy)
 			{
-				for (uint32_t xx = 0; xx < 11; ++xx)
+				for (uint32_t xx = 0; xx < 2; ++xx)
 				{
 					float mtx[16];
 					bx::mtxRotateXY(mtx, time + xx*0.21f, time + yy*0.37f);
@@ -322,7 +265,7 @@ public:
 
 					// Set vertex and index buffer.
 					bgfx::setVertexBuffer(0, m_vbh);
-					bgfx::setIndexBuffer(ibh);
+					bgfx::setIndexBuffer(m_ibh[xx&1]);
 
 					// Set render states.
 					bgfx::setState(state);
@@ -349,7 +292,7 @@ public:
 	uint32_t m_debug;
 	uint32_t m_reset;
 	bgfx::VertexBufferHandle m_vbh;
-	bgfx::IndexBufferHandle m_ibh[BX_COUNTOF(s_ptState)];
+	bgfx::DynamicIndexBufferHandle m_ibh[2];
 	bgfx::ProgramHandle m_program;
 	int64_t m_timeOffset;
 	int32_t m_pt;
