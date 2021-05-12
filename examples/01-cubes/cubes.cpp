@@ -12,16 +12,17 @@ namespace
 
 struct PosColorVertex
 {
-	float m_x;
-	float m_y;
-	float m_z;
+	short m_x;
+	short m_y;
+	short m_z;
+	short m_w;
 	uint32_t m_abgr;
 
 	static void init()
 	{
 		ms_layout
 			.begin()
-			.add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+			.add(bgfx::Attrib::Position, 4, bgfx::AttribType::Int16)
 			.add(bgfx::Attrib::Color0,   4, bgfx::AttribType::Uint8, true)
 			.end();
 	};
@@ -33,14 +34,14 @@ bgfx::VertexLayout PosColorVertex::ms_layout;
 
 static PosColorVertex s_cubeVertices[] =
 {
-	{-1.0f,  1.0f,  1.0f, 0xff000000 },
-	{ 1.0f,  1.0f,  1.0f, 0xff0000ff },
-	{-1.0f, -1.0f,  1.0f, 0xff00ff00 },
-	{ 1.0f, -1.0f,  1.0f, 0xff00ffff },
-	{-1.0f,  1.0f, -1.0f, 0xffff0000 },
-	{ 1.0f,  1.0f, -1.0f, 0xffff00ff },
-	{-1.0f, -1.0f, -1.0f, 0xffffff00 },
-	{ 1.0f, -1.0f, -1.0f, 0xffffffff },
+	{-1,  1,  1, 0, 0xff000000 },
+	{ 1,  1,  1, 0, 0xff0000ff },
+	{-1, -1,  1, 0, 0xff00ff00 },
+	{ 1, -1,  1, 0, 0xff00ffff },
+	{-1,  1, -1, 0, 0xffff0000 },
+	{ 1,  1, -1, 0, 0xffff00ff },
+	{-1, -1, -1, 0, 0xffffff00 },
+	{ 1, -1, -1, 0, 0xffffffff },
 };
 
 static const uint16_t s_cubeTriList[] =
