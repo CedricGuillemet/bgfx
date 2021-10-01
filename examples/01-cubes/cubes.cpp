@@ -6,6 +6,7 @@
 #include "common.h"
 #include "bgfx_utils.h"
 #include "imgui/imgui.h"
+#include <array>
 
 namespace
 {
@@ -142,7 +143,8 @@ public:
 		m_width  = _width;
 		m_height = _height;
 		m_debug  = BGFX_DEBUG_NONE;
-		m_reset  = BGFX_RESET_VSYNC;
+        // removing BGFX_RESET_MSAA_X4 = enable rendering
+        m_reset  = BGFX_RESET_VSYNC | BGFX_RESET_MSAA_X4;
 
 		bgfx::Init init;
 		init.type     = args.m_type;
@@ -156,12 +158,7 @@ public:
 		bgfx::setDebug(m_debug);
 
 		// Set view 0 clear state.
-		bgfx::setViewClear(0
-			, BGFX_CLEAR_COLOR|BGFX_CLEAR_DEPTH
-			, 0x303030ff
-			, 1.0f
-			, 0
-			);
+		
 
 		// Create vertex stream declaration.
 		PosColorVertex::init();
@@ -206,6 +203,28 @@ public:
 		// Create program from shaders.
 		m_program = loadProgram("vs_cubes", "fs_cubes");
 
+        
+        auto depthStencilFormat = bgfx::TextureFormat::D32;
+        auto format = bgfx::TextureFormat::BGRA8;
+        auto generateMips = false;
+        
+        assert(bgfx::isTextureValid(0, false, 1, format, BGFX_TEXTURE_RT));
+        assert(bgfx::isTextureValid(0, false, 1, depthStencilFormat, BGFX_TEXTURE_RT));
+
+        auto width = 512;
+        auto height = 512;
+        std::array<bgfx::TextureHandle, 2> textures{
+            bgfx::createTexture2D(width, height, generateMips, 1, format, BGFX_TEXTURE_RT),
+            bgfx::createTexture2D(width, height, false, 1, depthStencilFormat, BGFX_TEXTURE_RT)};
+        std::array<bgfx::Attachment, textures.size()> attachments{};
+        for (size_t idx = 0; idx < attachments.size(); ++idx)
+        {
+            attachments[idx].init(textures[idx]);
+        }
+        fbh = bgfx::createFrameBuffer(static_cast<uint8_t>(attachments.size()), attachments.data(), true);
+        
+        
+        
 		m_timeOffset = bx::getHPCounter();
 
 		imguiCreate();
@@ -234,61 +253,27 @@ public:
 	{
 		if (!entry::processEvents(m_width, m_height, m_debug, m_reset, &m_mouseState) )
 		{
-			imguiBeginFrame(m_mouseState.m_mx
-				,  m_mouseState.m_my
-				, (m_mouseState.m_buttons[entry::MouseButton::Left  ] ? IMGUI_MBUT_LEFT   : 0)
-				| (m_mouseState.m_buttons[entry::MouseButton::Right ] ? IMGUI_MBUT_RIGHT  : 0)
-				| (m_mouseState.m_buttons[entry::MouseButton::Middle] ? IMGUI_MBUT_MIDDLE : 0)
-				,  m_mouseState.m_mz
-				, uint16_t(m_width)
-				, uint16_t(m_height)
-				);
-
-			showExampleDialog(this);
-
-			ImGui::SetNextWindowPos(
-				  ImVec2(m_width - m_width / 5.0f - 10.0f, 10.0f)
-				, ImGuiCond_FirstUseEver
-				);
-			ImGui::SetNextWindowSize(
-				  ImVec2(m_width / 5.0f, m_height / 3.5f)
-				, ImGuiCond_FirstUseEver
-				);
-			ImGui::Begin("Settings"
-				, NULL
-				, 0
-				);
-
-			ImGui::Checkbox("Write R", &m_r);
-			ImGui::Checkbox("Write G", &m_g);
-			ImGui::Checkbox("Write B", &m_b);
-			ImGui::Checkbox("Write A", &m_a);
-
-			ImGui::Text("Primitive topology:");
-			ImGui::Combo("", (int*)&m_pt, s_ptNames, BX_COUNTOF(s_ptNames) );
-
-			ImGui::End();
-
-			imguiEndFrame();
-
 			float time = (float)( (bx::getHPCounter()-m_timeOffset)/double(bx::getHPFrequency() ) );
 
-			const bx::Vec3 at  = { 0.0f, 0.0f,   0.0f };
-			const bx::Vec3 eye = { 0.0f, 0.0f, -35.0f };
+			const bx::Vec3 at  = { 0.0f, 0.0f,   00.0f };
+			const bx::Vec3 eye = { 0.0f, 0.0f, -5.0f };
 
 			// Set view and projection matrix for view 0.
-			{
-				float view[16];
-				bx::mtxLookAt(view, eye, at);
-
-				float proj[16];
-				bx::mtxProj(proj, 60.0f, float(m_width)/float(m_height), 0.1f, 100.0f, bgfx::getCaps()->homogeneousDepth);
-				bgfx::setViewTransform(0, view, proj);
-
-				// Set view 0 default viewport.
-				bgfx::setViewRect(0, 0, 0, uint16_t(m_width), uint16_t(m_height) );
-			}
-
+			
+            float view[16];
+            bx::mtxLookAt(view, eye, at);
+            float proj[16];
+            bx::mtxProj(proj, 60.0f, float(m_width)/float(m_height), 0.1f, 100.0f, bgfx::getCaps()->homogeneousDepth);
+            bgfx::setViewTransform(0, view, proj);
+            // Set view 0 default viewport.
+            bgfx::setViewRect(0, 0, 0, uint16_t(m_width), uint16_t(m_height) );
+            
+            bgfx::setViewClear(0
+                , BGFX_CLEAR_COLOR|BGFX_CLEAR_DEPTH
+                , 0x303030ff
+                , 1.0f
+                , 0
+                );
 			// This dummy draw call is here to make sure that view 0 is cleared
 			// if no other draw calls are submitted to view 0.
 			bgfx::touch(0);
@@ -307,30 +292,46 @@ public:
 				;
 
 			// Submit 11x11 cubes.
-			for (uint32_t yy = 0; yy < 11; ++yy)
-			{
-				for (uint32_t xx = 0; xx < 11; ++xx)
-				{
-					float mtx[16];
-					bx::mtxRotateXY(mtx, time + xx*0.21f, time + yy*0.37f);
-					mtx[12] = -15.0f + float(xx)*3.0f;
-					mtx[13] = -15.0f + float(yy)*3.0f;
-					mtx[14] = 0.0f;
+            float mtx[16];
+            bx::mtxRotateXY(mtx, time, time);
 
-					// Set model matrix for rendering.
-					bgfx::setTransform(mtx);
+            bgfx::setViewClear(1
+                , BGFX_CLEAR_COLOR|BGFX_CLEAR_DEPTH
+                , 0x303030ff
+                , 1.0f
+                , 0
+                );
 
-					// Set vertex and index buffer.
-					bgfx::setVertexBuffer(0, m_vbh);
-					bgfx::setIndexBuffer(ibh);
+            bgfx::setViewRect(1, 0, 0, 512, 512);
+            bgfx::setViewFrameBuffer(1, fbh);
+            bgfx::setViewTransform(1, view, proj);
+            bgfx::setStencil(0);
+            bgfx::setTransform(mtx);
+            bgfx::setVertexBuffer(0, m_vbh);
+            bgfx::setIndexBuffer(ibh);
+            bgfx::setState(state);
+            bgfx::submit(1, m_program);
 
-					// Set render states.
-					bgfx::setState(state);
-
-					// Submit primitive for rendering to view 0.
-					bgfx::submit(0, m_program);
-				}
-			}
+            /*
+            Adding clear here fixes the issue
+            bgfx::setViewClear(2
+                , BGFX_CLEAR_COLOR|BGFX_CLEAR_DEPTH
+                , 0x303030ff
+                , 1.0f
+                , 0
+                );
+*/
+            bgfx::touch(2);
+            bgfx::setViewFrameBuffer(2, {bgfx::kInvalidHandle});
+            bgfx::setViewRect(2, 0, 0, m_width, m_height);
+            bgfx::setViewTransform(2, view, proj);
+            bgfx::setTransform(mtx);
+            bgfx::setVertexBuffer(0, m_vbh);
+            bgfx::setIndexBuffer(ibh);
+            bgfx::setState(state);
+            
+            bgfx::submit(2, m_program);
+            
 
 			// Advance to next frame. Rendering thread will be kicked to
 			// process submitted rendering primitives.
@@ -351,6 +352,7 @@ public:
 	bgfx::VertexBufferHandle m_vbh;
 	bgfx::IndexBufferHandle m_ibh[BX_COUNTOF(s_ptState)];
 	bgfx::ProgramHandle m_program;
+    bgfx::FrameBufferHandle fbh;
 	int64_t m_timeOffset;
 	int32_t m_pt;
 
