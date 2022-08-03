@@ -10,37 +10,64 @@
 namespace
 {
 
-struct PosColorVertex
+struct PosVertex
 {
 	float m_x;
 	float m_y;
 	float m_z;
-	uint32_t m_abgr;
 
 	static void init()
 	{
 		ms_layout
 			.begin()
 			.add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
-			.add(bgfx::Attrib::Color0,   4, bgfx::AttribType::Uint8, true)
 			.end();
 	};
 
 	static bgfx::VertexLayout ms_layout;
 };
 
-bgfx::VertexLayout PosColorVertex::ms_layout;
+bgfx::VertexLayout PosVertex::ms_layout;
 
-static PosColorVertex s_cubeVertices[8] =
+static PosVertex s_cubeVertices[8] =
 {
-	{-1.0f,  1.0f,  1.0f, 0xff000000 },
-	{ 1.0f,  1.0f,  1.0f, 0xff0000ff },
-	{-1.0f, -1.0f,  1.0f, 0xff00ff00 },
-	{ 1.0f, -1.0f,  1.0f, 0xff00ffff },
-	{-1.0f,  1.0f, -1.0f, 0xffff0000 },
-	{ 1.0f,  1.0f, -1.0f, 0xffff00ff },
-	{-1.0f, -1.0f, -1.0f, 0xffffff00 },
-	{ 1.0f, -1.0f, -1.0f, 0xffffffff },
+	{-1.0f,  1.0f,  1.0f },
+	{ 1.0f,  1.0f,  1.0f },
+	{-1.0f, -1.0f,  1.0f },
+	{ 1.0f, -1.0f,  1.0f },
+	{-1.0f,  1.0f, -1.0f },
+	{ 1.0f,  1.0f, -1.0f },
+	{-1.0f, -1.0f, -1.0f },
+	{ 1.0f, -1.0f, -1.0f },
+};
+
+struct ColorVertex
+{
+	uint32_t m_abgr;
+
+	static void init()
+	{
+		ms_layout
+			.begin()
+			.add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
+			.end();
+	};
+
+	static bgfx::VertexLayout ms_layout;
+};
+
+bgfx::VertexLayout ColorVertex::ms_layout;
+
+static ColorVertex s_cubeVerticesColor[8] =
+{
+	{ 0xff000000 },
+	{ 0xff0000ff },
+	{ 0xff00ff00 },
+	{ 0xff00ffff },
+	{ 0xffff0000 },
+	{ 0xffff00ff },
+	{ 0xffffff00 },
+	{ 0xffffffff },
 };
 
 static const uint16_t s_cubeIndices[36] =
@@ -99,13 +126,19 @@ public:
 			);
 
 		// Create vertex stream declaration.
-		PosColorVertex::init();
+		PosVertex::init();
+		ColorVertex::init();
 
 		// Create static vertex buffer.
 		m_vbh = bgfx::createVertexBuffer(
 					  bgfx::makeRef(s_cubeVertices, sizeof(s_cubeVertices) )
-					, PosColorVertex::ms_layout
+					, PosVertex::ms_layout
 					);
+
+		m_vbhColor = bgfx::createVertexBuffer(
+			bgfx::makeRef(s_cubeVerticesColor, sizeof(s_cubeVerticesColor))
+			, ColorVertex::ms_layout
+		);
 
 		// Create static index buffer.
 		m_ibh = bgfx::createIndexBuffer(
@@ -128,6 +161,7 @@ public:
 		// Cleanup.
 		bgfx::destroy(m_ibh);
 		bgfx::destroy(m_vbh);
+		bgfx::destroy(m_vbhColor);
 		bgfx::destroy(m_program);
 		bgfx::destroy(m_program_non_instanced);
 
@@ -273,6 +307,8 @@ public:
 
 				// Set vertex and index buffer.
 				bgfx::setVertexBuffer(0, m_vbh);
+				bgfx::setVertexBuffer(1, m_vbhColor);
+				
 				bgfx::setIndexBuffer(m_ibh);
 
 				// Set instance data buffer.
@@ -333,7 +369,7 @@ public:
 	uint32_t m_lastFrameMissing;
 	uint32_t m_sideSize;
 
-	bgfx::VertexBufferHandle m_vbh;
+	bgfx::VertexBufferHandle m_vbh, m_vbhColor;
 	bgfx::IndexBufferHandle  m_ibh;
 	bgfx::ProgramHandle m_program;
 	bgfx::ProgramHandle m_program_non_instanced;
