@@ -147,6 +147,19 @@ namespace bgfx { namespace vk
 		{ VK_PRESENT_MODE_IMMEDIATE_KHR,    false, "VK_PRESENT_MODE_IMMEDIATE_KHR"    },
 	};
 
+	static const VkLatencyMarkerNV s_latencyMarker[] =
+	{
+		VK_LATENCY_MARKER_SIMULATION_START_NV,
+		VK_LATENCY_MARKER_SIMULATION_END_NV,
+		VK_LATENCY_MARKER_RENDERSUBMIT_START_NV,
+		VK_LATENCY_MARKER_RENDERSUBMIT_END_NV,
+		VK_LATENCY_MARKER_PRESENT_START_NV,
+		VK_LATENCY_MARKER_PRESENT_END_NV,
+	};
+	static_assert(LatencyMarker::Count == BX_COUNTOF(s_latencyMarker) );
+
+	static constexpr uint64_t kLowLatencySleepTimeout = UINT64_C(500000000);
+
 #define VK_IMPORT_FUNC(_optional, _func) PFN_##_func _func
 #define VK_IMPORT_INSTANCE_FUNC VK_IMPORT_FUNC
 #define VK_IMPORT_DEVICE_FUNC   VK_IMPORT_FUNC
@@ -383,12 +396,14 @@ VK_IMPORT_DEVICE
 			KHR_fragment_shading_rate,
 			KHR_get_physical_device_properties2,
 			KHR_get_surface_capabilities2,
+			KHR_present_id,
 			KHR_shader_float16_int8,
 			KHR_video_queue,
 			KHR_video_decode_queue,
 			KHR_video_decode_h264,
 			KHR_video_decode_h265,
 			KHR_video_decode_av1,
+			NV_low_latency2,
 
 #	if BX_PLATFORM_ANDROID
 			KHR_android_surface,
@@ -433,12 +448,14 @@ VK_IMPORT_DEVICE
 		{ "VK_KHR_fragment_shading_rate",           1, false, false, true,                                                          Layer::Count },
 		{ "VK_KHR_get_physical_device_properties2", 1, false, false, true,                                                          Layer::Count },
 		{ "VK_KHR_get_surface_capabilities2",       1, false, false, true,                                                          Layer::Count },
+		{ "VK_KHR_present_id",                      1, false, false, false,                                                         Layer::Count },
 		{ "VK_KHR_shader_float16_int8",             1, false, false, true,                                                          Layer::Count },
 		{ "VK_KHR_video_queue",                     1, false, false, true,                                                          Layer::Count },
 		{ "VK_KHR_video_decode_queue",              1, false, false, true,                                                          Layer::Count },
 		{ "VK_KHR_video_decode_h264",               1, false, false, true,                                                          Layer::Count },
 		{ "VK_KHR_video_decode_h265",               1, false, false, true,                                                          Layer::Count },
 		{ "VK_KHR_video_decode_av1",                1, false, false, true,                                                          Layer::Count },
+		{ "VK_NV_low_latency2",                     2, false, false, false,                                                         Layer::Count },
 #	if BX_PLATFORM_ANDROID
 		{ VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,    1, false, false, true,                                                          Layer::Count },
 #	elif BX_PLATFORM_LINUX
@@ -1307,6 +1324,7 @@ VK_IMPORT_DEVICE
 			, m_captureMemory()
 			, m_captureSize(0)
 			, m_variableRateShadingSupported(false)
+			, m_lowLatencySupported(false)
 		{
 		}
 
@@ -1343,6 +1361,8 @@ VK_IMPORT_DEVICE
 			VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT swapchainMaintenance1Features = {};
 			VkPhysicalDeviceShaderFloat16Int8Features shaderFloat16Int8Features = {};
 			VkPhysicalDevice16BitStorageFeatures storage16BitFeatures = {};
+			VkPhysicalDeviceTimelineSemaphoreFeatures timelineSemaphoreFeatures = {};
+			VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures = {};
 
 			m_fbh = BGFX_INVALID_HANDLE;
 			m_readOnlyDepthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1353,6 +1373,13 @@ VK_IMPORT_DEVICE
 			m_globalQueueFamily = UINT32_MAX;
 			m_videoDecodeQueueFamily = UINT32_MAX;
 			m_videoDecodeQueue = VK_NULL_HANDLE;
+
+			m_lowLatencySupported      = false;
+			m_lowLatencyMode           = getLatencyMode(_init.reset);
+			m_lowLatencySwapChain      = VK_NULL_HANDLE;
+			m_lowLatencySemaphore      = VK_NULL_HANDLE;
+			m_lowLatencySemaphoreValue = 0;
+			m_lowLatencyPresentId      = 0;
 
 			if (_init.debug
 			||  _init.profile)
@@ -1412,6 +1439,20 @@ VK_IMPORT
 				s_extension[Extension::EXT_shader_viewport_index_layer].m_initialize = !!(_init.capabilities & BGFX_CAPS_VIEWPORT_LAYER_ARRAY );
 				s_extension[Extension::KHR_draw_indirect_count        ].m_initialize = !!(_init.capabilities & BGFX_CAPS_DRAW_INDIRECT_COUNT  );
 				s_extension[Extension::KHR_fragment_shading_rate      ].m_initialize = !!(_init.capabilities & BGFX_CAPS_VARIABLE_RATE_SHADING);
+
+				// NVIDIA Reflex is Windows only.
+				const bool lowLatency = true
+					&& BX_ENABLED(BX_PLATFORM_WINDOWS)
+					&& 0 != (_init.capabilities & BGFX_CAPS_LOW_LATENCY)
+					&& !headless
+					&& NULL == g_platformData.context
+					;
+
+				s_extension[Extension::KHR_present_id ].m_initialize = lowLatency;
+				s_extension[Extension::NV_low_latency2].m_initialize = lowLatency;
+
+				s_extension[Extension::KHR_present_id ].m_supported = false;
+				s_extension[Extension::NV_low_latency2].m_supported = false;
 
 				dumpExtensions(VK_NULL_HANDLE, s_extension);
 
@@ -1851,6 +1892,45 @@ VK_IMPORT_INSTANCE
 					}
 				}
 
+				{
+					bool lowLatencySupported = true
+						&& s_extension[Extension::NV_low_latency2].m_supported
+						&& s_extension[Extension::KHR_present_id ].m_supported
+						&& VK_API_VERSION_1_2 <= m_instanceApiVersion
+						&& VK_API_VERSION_1_2 <= m_deviceProperties.apiVersion
+						&& NULL != vkGetPhysicalDeviceFeatures2KHR
+						;
+
+					if (lowLatencySupported)
+					{
+						VkPhysicalDeviceFeatures2KHR deviceFeatures2;
+						deviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR;
+						deviceFeatures2.pNext = &timelineSemaphoreFeatures;
+
+						timelineSemaphoreFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
+						timelineSemaphoreFeatures.pNext = &presentIdFeatures;
+
+						presentIdFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR;
+						presentIdFeatures.pNext = NULL;
+
+						vkGetPhysicalDeviceFeatures2KHR(m_physicalDevice, &deviceFeatures2);
+
+						lowLatencySupported = true
+							&& timelineSemaphoreFeatures.timelineSemaphore
+							&& presentIdFeatures.presentId
+							;
+					}
+
+					if (lowLatencySupported)
+					{
+						presentIdFeatures.pNext = (VkBaseOutStructure*)nextFeatures;
+						nextFeatures = &timelineSemaphoreFeatures;
+					}
+
+					s_extension[Extension::KHR_present_id ].m_supported = lowLatencySupported;
+					s_extension[Extension::NV_low_latency2].m_supported = lowLatencySupported;
+				}
+
 				m_deviceFeatures =
 				{
 					.robustBufferAccess                      = true
@@ -2277,6 +2357,34 @@ VK_IMPORT_DEVICE
 			vkGetDeviceQueue(m_device, m_globalQueueFamily, 0, &m_globalQueue);
 			vkGetDeviceQueue(m_device, m_videoDecodeQueueFamily, 0, &m_videoDecodeQueue);
 
+			m_lowLatencySupported = true
+				&& s_extension[Extension::NV_low_latency2].m_supported
+				&& NULL != vkSetLatencySleepModeNV
+				&& NULL != vkLatencySleepNV
+				&& NULL != vkSetLatencyMarkerNV
+				&& NULL != vkGetLatencyTimingsNV
+				&& NULL != vkWaitSemaphores
+				;
+
+			if (m_lowLatencySupported)
+			{
+				VkSemaphoreTypeCreateInfo stci;
+				stci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+				stci.pNext = NULL;
+				stci.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+				stci.initialValue  = 0;
+
+				VkSemaphoreCreateInfo sci;
+				sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+				sci.pNext = &stci;
+				sci.flags = 0;
+
+				result = vkCreateSemaphore(m_device, &sci, m_allocatorCb, &m_lowLatencySemaphore);
+				BX_WARN(VK_SUCCESS == result, "vkCreateSemaphore failed %d: %s.", result, getName(result) );
+
+				m_lowLatencySupported = VK_SUCCESS == result;
+			}
+
 			if (_init.videoDecode)
 			{
 				initVideoDecoder(this
@@ -2336,6 +2444,11 @@ VK_IMPORT_DEVICE
 					{
 						BX_TRACE("Init error: creating swap chain failed %d: %s.", result, getName(result) );
 						goto error;
+					}
+
+					if (m_lowLatencySupported)
+					{
+						g_caps.supported |= BGFX_CAPS_LOW_LATENCY;
 					}
 
 					m_windows[0] = BGFX_INVALID_HANDLE;
@@ -2503,6 +2616,7 @@ VK_IMPORT_DEVICE
 				[[fallthrough]];
 
 			case ErrorState::DeviceCreated:
+				vkDestroy(m_lowLatencySemaphore);
 				vkDestroyDevice(m_device, m_allocatorCb);
 				[[fallthrough]];
 
@@ -2574,6 +2688,7 @@ VK_IMPORT_DEVICE
 			m_memoryLru.evictAll();
 
 			vkDestroy(m_pipelineCache);
+			vkDestroy(m_lowLatencySemaphore);
 
 			for (uint32_t ii = 0; ii < m_maxFrameLatency; ++ii)
 			{
@@ -2992,6 +3107,159 @@ VK_IMPORT_DEVICE
 			}
 		}
 
+		void latencySleep() override
+		{
+			uint64_t value;
+
+			{
+				bx::MutexScope scope(m_lowLatencyMutex);
+
+				if (VK_NULL_HANDLE == m_lowLatencySwapChain)
+				{
+					return;
+				}
+
+				value = ++m_lowLatencySemaphoreValue;
+
+				VkLatencySleepInfoNV lsi;
+				lsi.sType = VK_STRUCTURE_TYPE_LATENCY_SLEEP_INFO_NV;
+				lsi.pNext = NULL;
+				lsi.signalSemaphore = m_lowLatencySemaphore;
+				lsi.value           = value;
+
+				const VkResult result = vkLatencySleepNV(m_device, m_lowLatencySwapChain, &lsi);
+
+				if (VK_SUCCESS != result)
+				{
+					BX_TRACE("vkLatencySleepNV failed %d: %s.", result, getName(result) );
+					return;
+				}
+			}
+
+			VkSemaphoreWaitInfo swi;
+			swi.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
+			swi.pNext = NULL;
+			swi.flags = 0;
+			swi.semaphoreCount = 1;
+			swi.pSemaphores    = &m_lowLatencySemaphore;
+			swi.pValues        = &value;
+
+			const VkResult result = vkWaitSemaphores(m_device, &swi, kLowLatencySleepTimeout);
+			BX_WARN(VK_SUCCESS == result, "vkWaitSemaphores failed %d: %s.", result, getName(result) ); BX_UNUSED(result);
+		}
+
+		void setLatencyMarker(LatencyMarker::Enum _marker, uint64_t _frameId) override
+		{
+			bx::MutexScope scope(m_lowLatencyMutex);
+
+			if (LatencyMarker::PresentStart == _marker)
+			{
+				m_lowLatencyPresentId = _frameId;
+			}
+
+			if (VK_NULL_HANDLE != m_lowLatencySwapChain)
+			{
+				VkSetLatencyMarkerInfoNV slmi;
+				slmi.sType     = VK_STRUCTURE_TYPE_SET_LATENCY_MARKER_INFO_NV;
+				slmi.pNext     = NULL;
+				slmi.presentID = _frameId;
+				slmi.marker    = s_latencyMarker[_marker];
+
+				vkSetLatencyMarkerNV(m_device, m_lowLatencySwapChain, &slmi);
+			}
+		}
+
+		void setLowLatencySwapChain(VkSwapchainKHR _swapChain)
+		{
+			bx::MutexScope scope(m_lowLatencyMutex);
+
+			m_lowLatencySwapChain = _swapChain;
+
+			if (VK_NULL_HANDLE != m_lowLatencySwapChain)
+			{
+				setLowLatencySleepMode();
+			}
+		}
+
+		void setLowLatencyMode(LatencyMode::Enum _mode)
+		{
+			bx::MutexScope scope(m_lowLatencyMutex);
+
+			m_lowLatencyMode = _mode;
+
+			if (VK_NULL_HANDLE != m_lowLatencySwapChain)
+			{
+				setLowLatencySleepMode();
+			}
+		}
+
+		void setLowLatencySleepMode()
+		{
+			VkLatencySleepModeInfoNV lsmi;
+			lsmi.sType = VK_STRUCTURE_TYPE_LATENCY_SLEEP_MODE_INFO_NV;
+			lsmi.pNext = NULL;
+			lsmi.lowLatencyMode    = LatencyMode::Off   != m_lowLatencyMode;
+			lsmi.lowLatencyBoost   = LatencyMode::Boost == m_lowLatencyMode;
+			lsmi.minimumIntervalUs = 0;
+
+			VK_CHECK(vkSetLatencySleepModeNV(m_device, m_lowLatencySwapChain, &lsmi) );
+		}
+
+		bool getLatencyReport(LatencyReport& _report)
+		{
+			bx::MutexScope scope(m_lowLatencyMutex);
+
+			if (VK_NULL_HANDLE == m_lowLatencySwapChain)
+			{
+				return false;
+			}
+
+			VkLatencyTimingsFrameReportNV* timings = m_lowLatencyTimings;
+
+			for (uint32_t ii = 0; ii < BX_COUNTOF(m_lowLatencyTimings); ++ii)
+			{
+				timings[ii].sType = VK_STRUCTURE_TYPE_LATENCY_TIMINGS_FRAME_REPORT_NV;
+				timings[ii].pNext = NULL;
+			}
+
+			VkGetLatencyMarkerInfoNV glmi;
+			glmi.sType = VK_STRUCTURE_TYPE_GET_LATENCY_MARKER_INFO_NV;
+			glmi.pNext = NULL;
+			glmi.timingCount = BX_COUNTOF(m_lowLatencyTimings);
+			glmi.pTimings    = timings;
+
+			vkGetLatencyTimingsNV(m_device, m_lowLatencySwapChain, &glmi);
+
+			const VkLatencyTimingsFrameReportNV* newest = NULL;
+
+			for (uint32_t ii = 0, num = bx::min<uint32_t>(glmi.timingCount, BX_COUNTOF(m_lowLatencyTimings) ); ii < num; ++ii)
+			{
+				const VkLatencyTimingsFrameReportNV& timing = timings[ii];
+
+				if (0 != timing.simStartTimeUs
+				&&  timing.gpuRenderEndTimeUs > timing.simStartTimeUs
+				&& (NULL == newest || timing.presentID > newest->presentID) )
+				{
+					newest = &timing;
+				}
+			}
+
+			if (NULL == newest)
+			{
+				return false;
+			}
+
+			_report.simulationStart   = newest->simStartTimeUs;
+			_report.simulationEnd     = newest->simEndTimeUs;
+			_report.renderSubmitStart = newest->renderSubmitStartTimeUs;
+			_report.renderSubmitEnd   = newest->renderSubmitEndTimeUs;
+			_report.presentStart      = newest->presentStartTimeUs;
+			_report.presentEnd        = newest->presentEndTimeUs;
+			_report.gpuRenderStart    = newest->gpuRenderStartTimeUs;
+			_report.gpuRenderEnd      = newest->gpuRenderEndTimeUs;
+			return true;
+		}
+
 		virtual void setName(Handle _handle, const char* _name, uint16_t _len) override
 		{
 			switch (_handle.type)
@@ -3187,7 +3455,8 @@ VK_IMPORT_DEVICE
 
 				release(m_captureBuffer);
 				recycleMemory(m_captureMemory);
-				m_captureSize = 0;
+				m_captureMemory = {};
+				m_captureSize   = 0;
 			}
 		}
 
@@ -3210,7 +3479,7 @@ VK_IMPORT_DEVICE
 					VK_CHECK(createReadbackBuffer(m_captureSize, &m_captureBuffer, &m_captureMemory) );
 				}
 
-				g_callback->captureBegin(m_mainSwapChain.width, m_mainSwapChain.height, pitch, m_mainSwapChain.formatColor, false);
+				g_callback->captureBegin(m_mainSwapChain.width, m_mainSwapChain.height, pitch, m_backBuffer.m_swapChain.m_colorFormat, false);
 			}
 		}
 
@@ -3251,7 +3520,16 @@ VK_IMPORT_DEVICE
 			uint32_t maskFlags = ~(0
 				| BGFX_RESET_SUSPEND
 				| BGFX_RESET_MAXANISOTROPY
+				| BGFX_RESET_LOW_LATENCY_MASK
 				);
+
+			const LatencyMode::Enum lowLatencyMode = getLatencyMode(_reset);
+
+			if (m_lowLatencySupported
+			&&  m_lowLatencyMode != lowLatencyMode)
+			{
+				setLowLatencyMode(lowLatencyMode);
+			}
 
 			if (m_swapchainMaintenance1Supported
 			&& !!((_reset ^ m_reset) & BGFX_RESET_VSYNC) )
@@ -4057,7 +4335,7 @@ VK_IMPORT_DEVICE
 			return sampler;
 		}
 
-		VkImageView getCachedImageView(TextureHandle _handle, uint32_t _mip, uint32_t _numMips, VkImageViewType _type, bool _stencil = false, uint32_t _firstLayer = 0, uint32_t _numLayers = UINT32_MAX, uint32_t _samplerFlags = 0)
+		VkImageView getCachedImageView(TextureHandle _handle, uint32_t _mip, uint32_t _numMips, VkImageViewType _type, bool _stencil = false, uint32_t _firstLayer = 0, uint32_t _numLayers = UINT32_MAX, uint32_t _samplerFlags = 0, bool _msaa = false)
 		{
 			const TextureVK& texture = m_textures[_handle.idx];
 
@@ -4084,6 +4362,7 @@ VK_IMPORT_DEVICE
 			hash.add(firstLayer);
 			hash.add(numLayers);
 			hash.add(format);
+			hash.add(_msaa);
 			uint32_t hashKey = hash.end();
 
 			VkImageView* viewCached = m_imageViewCache.find(hashKey);
@@ -4099,10 +4378,312 @@ VK_IMPORT_DEVICE
 				;
 
 			VkImageView view;
-			VK_CHECK(texture.createView(firstLayer, numLayers, firstMip, numMips, _type, aspectMask, false, &view, format) );
+			VK_CHECK(texture.createView(firstLayer, numLayers, firstMip, numMips, _type, aspectMask, false, &view, format, _msaa) );
 			m_imageViewCache.add(hashKey, view, _handle.idx);
 
 			return view;
+		}
+
+		VkPipeline getResolveDepthPipeline(VkFormat _format, VkImageAspectFlags _aspect, ::VkRenderPass* _renderPass)
+		{
+			const ProgramVK& program = m_program[g_depthResolve->m_program[DepthResolve::Texture2DArray].idx];
+
+			const bool resolve = false;
+			uint32_t renderPassHashKey = 0;
+			VK_CHECK(getRenderPass(1, &_format, &_aspect, &resolve, VK_SAMPLE_COUNT_1_BIT, BGFX_CLEAR_NONE, 0, _renderPass, &renderPassHashKey) );
+
+			bx::HashMurmur2A murmur;
+			murmur.begin();
+			murmur.add(program.m_vsh->m_hash);
+			murmur.add(program.m_fsh->m_hash);
+			murmur.add(renderPassHashKey);
+			const uint32_t hash = murmur.end();
+
+			VkPipeline pipeline = m_pipelineStateCache.find(hash);
+
+			if (VK_NULL_HANDLE != pipeline)
+			{
+				return pipeline;
+			}
+
+			const VkPipelineShaderStageCreateInfo shaderStages[] =
+			{
+				{
+					.sType               = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+					.pNext               = NULL,
+					.flags               = 0,
+					.stage               = VK_SHADER_STAGE_VERTEX_BIT,
+					.module              = program.m_vsh->m_module,
+					.pName               = "main",
+					.pSpecializationInfo = NULL,
+				},
+				{
+					.sType               = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+					.pNext               = NULL,
+					.flags               = 0,
+					.stage               = VK_SHADER_STAGE_FRAGMENT_BIT,
+					.module              = program.m_fsh->m_module,
+					.pName               = "main",
+					.pSpecializationInfo = NULL,
+				},
+			};
+
+			const VkPipelineVertexInputStateCreateInfo vertexInputState =
+			{
+				.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+				.pNext                           = NULL,
+				.flags                           = 0,
+				.vertexBindingDescriptionCount   = 0,
+				.pVertexBindingDescriptions      = NULL,
+				.vertexAttributeDescriptionCount = 0,
+				.pVertexAttributeDescriptions    = NULL,
+			};
+
+			const VkPipelineInputAssemblyStateCreateInfo inputAssemblyState =
+			{
+				.sType                  = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+				.pNext                  = NULL,
+				.flags                  = 0,
+				.topology               = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+				.primitiveRestartEnable = VK_FALSE,
+			};
+
+			const VkPipelineViewportStateCreateInfo viewportState =
+			{
+				.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+				.pNext         = NULL,
+				.flags         = 0,
+				.viewportCount = 1,
+				.pViewports    = NULL,
+				.scissorCount  = 1,
+				.pScissors     = NULL,
+			};
+
+			VkPipelineRasterizationStateCreateInfo rasterizationState;
+			setRasterizerState(rasterizationState, 0);
+
+			const VkPipelineMultisampleStateCreateInfo multisampleState =
+			{
+				.sType                 = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+				.pNext                 = NULL,
+				.flags                 = 0,
+				.rasterizationSamples  = VK_SAMPLE_COUNT_1_BIT,
+				.sampleShadingEnable   = VK_FALSE,
+				.minSampleShading      = 0.0f,
+				.pSampleMask           = NULL,
+				.alphaToCoverageEnable = VK_FALSE,
+				.alphaToOneEnable      = VK_FALSE,
+			};
+
+			VkPipelineDepthStencilStateCreateInfo depthStencilState;
+			setDepthStencilState(depthStencilState, BGFX_STATE_DEPTH_TEST_ALWAYS|BGFX_STATE_WRITE_Z);
+
+			const VkPipelineColorBlendAttachmentState blendAttachmentState =
+			{
+				.blendEnable         = VK_FALSE,
+				.srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+				.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+				.colorBlendOp        = VK_BLEND_OP_ADD,
+				.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+				.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+				.alphaBlendOp        = VK_BLEND_OP_ADD,
+				.colorWriteMask      = 0,
+			};
+
+			const VkPipelineColorBlendStateCreateInfo colorBlendState =
+			{
+				.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+				.pNext           = NULL,
+				.flags           = 0,
+				.logicOpEnable   = VK_FALSE,
+				.logicOp         = VK_LOGIC_OP_CLEAR,
+				.attachmentCount = 1,
+				.pAttachments    = &blendAttachmentState,
+				.blendConstants  = { 0.0f, 0.0f, 0.0f, 0.0f },
+			};
+
+			const VkDynamicState dynamicStates[] =
+			{
+				VK_DYNAMIC_STATE_VIEWPORT,
+				VK_DYNAMIC_STATE_SCISSOR,
+			};
+
+			const VkPipelineDynamicStateCreateInfo dynamicState =
+			{
+				.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+				.pNext             = NULL,
+				.flags             = 0,
+				.dynamicStateCount = BX_COUNTOF(dynamicStates),
+				.pDynamicStates    = dynamicStates,
+			};
+
+			const VkGraphicsPipelineCreateInfo graphicsPipeline =
+			{
+				.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+				.pNext               = NULL,
+				.flags               = 0,
+				.stageCount          = BX_COUNTOF(shaderStages),
+				.pStages             = shaderStages,
+				.pVertexInputState   = &vertexInputState,
+				.pInputAssemblyState = &inputAssemblyState,
+				.pTessellationState  = NULL,
+				.pViewportState      = &viewportState,
+				.pRasterizationState = &rasterizationState,
+				.pMultisampleState   = &multisampleState,
+				.pDepthStencilState  = &depthStencilState,
+				.pColorBlendState    = &colorBlendState,
+				.pDynamicState       = &dynamicState,
+				.layout              = program.m_pipelineLayout,
+				.renderPass          = *_renderPass,
+				.subpass             = 0,
+				.basePipelineHandle  = VK_NULL_HANDLE,
+				.basePipelineIndex   = 0,
+			};
+
+			VK_CHECK(vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &graphicsPipeline, m_allocatorCb, &pipeline) );
+
+			m_pipelineStateCache.add(hash, pipeline);
+
+			return pipeline;
+		}
+
+		void resolveDepth(VkCommandBuffer _commandBuffer, TextureVK& _texture, uint32_t _layer, uint32_t _numLayers, uint32_t _mip)
+		{
+			const ProgramVK& program = m_program[g_depthResolve->m_program[DepthResolve::Texture2DArray].idx];
+
+			::VkRenderPass renderPass = VK_NULL_HANDLE;
+			const VkPipeline pipeline = getResolveDepthPipeline(_texture.m_format, _texture.m_aspectFlags, &renderPass);
+
+			_texture.setState(_commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			_texture.setState(_commandBuffer, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, true);
+
+			const uint32_t width  = bx::max<uint32_t>(_texture.m_width  >> _mip, 1);
+			const uint32_t height = bx::max<uint32_t>(_texture.m_height >> _mip, 1);
+
+			const VkViewport vp =
+			{
+				.x        = 0.0f,
+				.y        = 0.0f,
+				.width    = float(width),
+				.height   = float(height),
+				.minDepth = 0.0f,
+				.maxDepth = 1.0f,
+			};
+
+			const VkRect2D rc =
+			{
+				.offset = { .x     = 0,     .y      = 0      },
+				.extent = { .width = width, .height = height },
+			};
+
+			for (uint32_t ii = _layer, end = _layer + _numLayers; ii < end; ++ii)
+			{
+				const VkImageViewCreateInfo ivciMsaa =
+				{
+					.sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+					.pNext      = NULL,
+					.flags      = 0,
+					.image      = _texture.m_textureImage,
+					.viewType   = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+					.format     = _texture.m_format,
+					.components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY },
+					.subresourceRange =
+					{
+						.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT,
+						.baseMipLevel   = 0,
+						.levelCount     = 1,
+						.baseArrayLayer = ii,
+						.layerCount     = 1,
+					},
+				};
+
+				const VkImageViewCreateInfo ivciResolve =
+				{
+					.sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+					.pNext      = NULL,
+					.flags      = 0,
+					.image      = _texture.m_singleMsaaImage,
+					.viewType   = VK_IMAGE_VIEW_TYPE_2D,
+					.format     = _texture.m_format,
+					.components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY },
+					.subresourceRange =
+					{
+						.aspectMask     = _texture.m_aspectFlags,
+						.baseMipLevel   = _mip,
+						.levelCount     = 1,
+						.baseArrayLayer = ii,
+						.layerCount     = 1,
+					},
+				};
+
+				VkImageView views[2];
+				VK_CHECK(vkCreateImageView(m_device, &ivciMsaa,    m_allocatorCb, &views[0]) );
+				VK_CHECK(vkCreateImageView(m_device, &ivciResolve, m_allocatorCb, &views[1]) );
+
+				const VkFramebufferCreateInfo fci =
+				{
+					.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+					.pNext           = NULL,
+					.flags           = 0,
+					.renderPass      = renderPass,
+					.attachmentCount = 1,
+					.pAttachments    = &views[1],
+					.width           = width,
+					.height          = height,
+					.layers          = 1,
+				};
+
+				VkFramebuffer framebuffer;
+				VK_CHECK(vkCreateFramebuffer(m_device, &fci, m_allocatorCb, &framebuffer) );
+
+				const VkDescriptorSet descriptorSet = allocDescriptorSet(program.m_descriptorSetLayout);
+
+				const VkDescriptorImageInfo imageInfo =
+				{
+					.sampler     = VK_NULL_HANDLE,
+					.imageView   = views[0],
+					.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+				};
+
+				const VkWriteDescriptorSet wds =
+				{
+					.sType            = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+					.pNext            = NULL,
+					.dstSet           = descriptorSet,
+					.dstBinding       = program.m_bindInfo[0].binding,
+					.dstArrayElement  = 0,
+					.descriptorCount  = 1,
+					.descriptorType   = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+					.pImageInfo       = &imageInfo,
+					.pBufferInfo      = NULL,
+					.pTexelBufferView = NULL,
+				};
+
+				vkUpdateDescriptorSets(m_device, 1, &wds, 0, NULL);
+
+				const VkRenderPassBeginInfo rpbi =
+				{
+					.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+					.pNext           = NULL,
+					.renderPass      = renderPass,
+					.framebuffer     = framebuffer,
+					.renderArea      = rc,
+					.clearValueCount = 0,
+					.pClearValues    = NULL,
+				};
+
+				vkCmdBeginRenderPass(_commandBuffer, &rpbi, VK_SUBPASS_CONTENTS_INLINE);
+				vkCmdBindPipeline(_commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+				vkCmdSetViewport(_commandBuffer, 0, 1, &vp);
+				vkCmdSetScissor(_commandBuffer, 0, 1, &rc);
+				vkCmdBindDescriptorSets(_commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, program.m_pipelineLayout, 0, 1, &descriptorSet, 0, NULL);
+				vkCmdDraw(_commandBuffer, 3, 1, 0, 0);
+				vkCmdEndRenderPass(_commandBuffer);
+
+				release(framebuffer);
+				release(views[0]);
+				release(views[1]);
+			}
 		}
 
 		VkPipeline getPipeline(ProgramHandle _program)
@@ -4625,6 +5206,12 @@ VK_IMPORT_DEVICE
 								: _program.m_textures[bindInfo.index].type
 								;
 
+							const bool msaa = true
+								&& UINT32_MAX != bindInfo.index
+								&& _program.m_textures[bindInfo.index].msaa
+								&& 0 != (texture.m_flags & BGFX_TEXTURE_MSAA_SAMPLE)
+								;
+
 							const VkImageLayout layout = isReadOnlyDepthStencilLayout(texture.m_currentImageLayout)
 								? texture.m_currentImageLayout
 								: texture.m_sampledLayout
@@ -4643,6 +5230,7 @@ VK_IMPORT_DEVICE
 								, bind.m_firstLayer
 								, bind.m_numLayers
 								, samplerFlags
+								, msaa
 								);
 
 							wds[wdsCount].sType            = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -5282,6 +5870,16 @@ VK_IMPORT_DEVICE
 		uint32_t m_captureSize;
 
 		bool m_variableRateShadingSupported;
+
+		bool              m_lowLatencySupported;
+		LatencyMode::Enum m_lowLatencyMode;
+		VkSwapchainKHR    m_lowLatencySwapChain;
+		VkSemaphore       m_lowLatencySemaphore;
+		uint64_t          m_lowLatencySemaphoreValue;
+		uint64_t          m_lowLatencyPresentId;
+		bx::Mutex         m_lowLatencyMutex;
+
+		VkLatencyTimingsFrameReportNV m_lowLatencyTimings[64];
 
 		TextVideoMem m_textVideoMem;
 
@@ -5941,6 +6539,8 @@ VK_DESTROY
 					case TextureDimension::DimensionCube:      return VK_IMAGE_VIEW_TYPE_CUBE;
 					case TextureDimension::DimensionCubeArray: return VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
 					case TextureDimension::Dimension3D:        return VK_IMAGE_VIEW_TYPE_3D;
+					case TextureDimension::Dimension2DMS:      return VK_IMAGE_VIEW_TYPE_2D;
+					case TextureDimension::Dimension2DMSArray: return VK_IMAGE_VIEW_TYPE_2D_ARRAY;
 					default:                                   return VK_IMAGE_VIEW_TYPE_MAX_ENUM;
 					}
 				};
@@ -5985,7 +6585,11 @@ VK_DESTROY
 							if (VK_IMAGE_VIEW_TYPE_MAX_ENUM != viewType)
 							{
 								m_bindInfo[stage].index = m_numTextures;
-								m_textures[m_numTextures].type = viewType;
+								m_textures[m_numTextures] =
+								{
+									.type = viewType,
+									.msaa = false,
+								};
 								m_numTextures++;
 							}
 						}
@@ -6016,7 +6620,15 @@ VK_DESTROY
 						if (VK_IMAGE_VIEW_TYPE_MAX_ENUM != viewType)
 						{
 							m_bindInfo[stage].index = m_numTextures;
-							m_textures[m_numTextures].type = viewType;
+							m_textures[m_numTextures] =
+							{
+								.type = viewType,
+								.msaa = false
+									|| isShaderVerLess(magic, 13)
+									|| TextureDimension::Dimension2DMS      == idToTextureDimension(texDimension)
+									|| TextureDimension::Dimension2DMSArray == idToTextureDimension(texDimension)
+									,
+							};
 							m_numTextures++;
 						}
 
@@ -6218,6 +6830,7 @@ VK_DESTROY
 		}
 
 		m_numTextures = 0;
+		m_msaaMask    = 0;
 
 		for (uint8_t stage = 0; stage < BX_COUNTOF(m_bindInfo); ++stage)
 		{
@@ -6246,6 +6859,7 @@ VK_DESTROY
 				if (UINT32_MAX != index)
 				{
 					m_textures[m_numTextures] = shader->m_textures[index];
+					m_msaaMask |= shader->m_textures[index].msaa ? UINT32_C(1) << stage : 0;
 					index = m_numTextures;
 					m_numTextures++;
 				}
@@ -6984,8 +7598,10 @@ VK_DESTROY
 
 		const bool needResolve = true
 			&& 1  < m_sampler.Count
-			&& 0 != (ici.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
-			&& 0 == (m_flags & BGFX_TEXTURE_MSAA_SAMPLE)
+			&& (false
+				|| (0 != (ici.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) && 0 == (m_flags & BGFX_TEXTURE_MSAA_SAMPLE) )
+				||  0 != (ici.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
+				)
 			&& 0 == (m_flags & BGFX_TEXTURE_RT_WRITE_ONLY)
 			;
 
@@ -7616,7 +8232,11 @@ VK_DESTROY
 		{
 			const VkFormat resolveFormat = getViewFormat(_resolve, BGFX_ATTACHMENT_SRGB);
 
-			if (resolveFormat != m_format)
+			if (0 != (m_aspectFlags & VK_IMAGE_ASPECT_DEPTH_BIT) )
+			{
+				s_renderVK->resolveDepth(_commandBuffer, *this, _layer, numLayers, _mip);
+			}
+			else if (resolveFormat != m_format)
 			{
 				resolveRenderPass(_commandBuffer, resolveFormat, _layer, numLayers, _mip);
 				setState(_commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, true);
@@ -8022,7 +8642,7 @@ VK_DESTROY
 		return VK_FORMAT_UNDEFINED != format ? format : m_format;
 	}
 
-	VkResult TextureVK::createView(uint32_t _layer, uint32_t _numLayers, uint32_t _mip, uint32_t _numMips, VkImageViewType _type, VkImageAspectFlags _aspectMask, bool _renderTarget, ::VkImageView* _view, VkFormat _format) const
+	VkResult TextureVK::createView(uint32_t _layer, uint32_t _numLayers, uint32_t _mip, uint32_t _numMips, VkImageViewType _type, VkImageAspectFlags _aspectMask, bool _renderTarget, ::VkImageView* _view, VkFormat _format, bool _msaa) const
 	{
 		VkResult result = VK_SUCCESS;
 
@@ -8049,7 +8669,7 @@ VK_DESTROY
 		viewInfo.sType      = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 		viewInfo.pNext      = NULL;
 		viewInfo.flags      = 0;
-		viewInfo.image      = ( (VK_NULL_HANDLE != m_singleMsaaImage) && !_renderTarget)
+		viewInfo.image      = (VK_NULL_HANDLE != m_singleMsaaImage && !_renderTarget && !_msaa)
 			? m_singleMsaaImage
 			: m_textureImage
 			;
@@ -8118,6 +8738,37 @@ VK_DESTROY
 			return VK_IMAGE_ASPECT_COLOR_BIT;
 		}
 	}
+
+	bool SwapChainVK::isLowLatency() const
+	{
+		// Reflex paces the main swap chain only.
+		return true
+			&& s_renderVK->m_lowLatencySupported
+			&& this == &s_renderVK->m_backBuffer.m_swapChain
+			;
+	}
+
+	struct LowLatencyScope
+	{
+		LowLatencyScope(const SwapChainVK& _swapChain)
+			: m_mutex(_swapChain.isLowLatency() ? &s_renderVK->m_lowLatencyMutex : NULL)
+		{
+			if (NULL != m_mutex)
+			{
+				m_mutex->lock();
+			}
+		}
+
+		~LowLatencyScope()
+		{
+			if (NULL != m_mutex)
+			{
+				m_mutex->unlock();
+			}
+		}
+
+		bx::Mutex* m_mutex;
+	};
 
 	VkResult SwapChainVK::create(VkCommandBuffer _commandBuffer, void* _nwh, const SwapChain& _desc)
 	{
@@ -8608,7 +9259,7 @@ VK_DESTROY
 		const VkColorSpaceKHR surfaceColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
 
 		const bool srgb = !!(m_desc.flags & BGFX_SWAP_CHAIN_SRGB_BACKBUFFER);
-		m_colorFormat = m_desc.formatColor;
+		m_colorFormat = findSurfaceFormat(m_desc.formatColor, surfaceColorSpace, srgb);
 		m_depthFormat = bgfx::TextureFormat::UnknownDepth;
 
 		if (TextureFormat::Count == m_colorFormat)
@@ -8642,23 +9293,42 @@ VK_DESTROY
 					);
 		}
 
-		VkCompositeAlphaFlagBitsKHR compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-
-		if (m_desc.flags & BGFX_SWAP_CHAIN_TRANSPARENT_BACKBUFFER)
+		static const VkCompositeAlphaFlagBitsKHR s_compositeAlphaOpaque[] =
 		{
-			if (surfaceCapabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR)
+			VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+			VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+			VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+			VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+		};
+
+		static const VkCompositeAlphaFlagBitsKHR s_compositeAlphaTransparent[] =
+		{
+			VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+			VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+			VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+			VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+		};
+
+		const VkCompositeAlphaFlagBitsKHR* compositeAlphaPreference = (m_desc.flags & BGFX_SWAP_CHAIN_TRANSPARENT_BACKBUFFER)
+			? s_compositeAlphaTransparent
+			: s_compositeAlphaOpaque
+			;
+
+		VkCompositeAlphaFlagBitsKHR compositeAlpha = compositeAlphaPreference[0];
+
+		for (uint32_t ii = 0; ii < BX_COUNTOF(s_compositeAlphaOpaque); ++ii)
+		{
+			if (surfaceCapabilities.supportedCompositeAlpha & compositeAlphaPreference[ii])
 			{
-				compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
-			}
-			else if (surfaceCapabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR)
-			{
-				compositeAlpha = VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
-			}
-			else if (surfaceCapabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR)
-			{
-				compositeAlpha = VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR;
+				compositeAlpha = compositeAlphaPreference[ii];
+				break;
 			}
 		}
+
+		BX_WARN(0 != (surfaceCapabilities.supportedCompositeAlpha & compositeAlpha)
+			, "Create swapchain: No supported composite alpha mode (supported: 0x%x)."
+			, surfaceCapabilities.supportedCompositeAlpha
+			);
 
 		const VkImageUsageFlags imageUsageMask = 0
 			| VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
@@ -8715,6 +9385,19 @@ VK_DESTROY
 			modesInfo.pNext = m_sci.pNext;
 
 			m_sci.pNext = &modesInfo;
+		}
+
+		const bool lowLatency = isLowLatency();
+
+		VkSwapchainLatencyCreateInfoNV latencyInfo;
+
+		if (lowLatency)
+		{
+			latencyInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_LATENCY_CREATE_INFO_NV;
+			latencyInfo.pNext = m_sci.pNext;
+			latencyInfo.latencyModeEnable = VK_TRUE;
+
+			m_sci.pNext = &latencyInfo;
 		}
 
 		result = vkCreateSwapchainKHR(device, &m_sci, allocatorCb, &m_swapChain);
@@ -8828,12 +9511,22 @@ VK_DESTROY
 		m_needPresent = false;
 		m_needToRecreateSwapchain = false;
 
+		if (lowLatency)
+		{
+			s_renderVK->setLowLatencySwapChain(m_swapChain);
+		}
+
 		return result;
 	}
 
 	void SwapChainVK::releaseSwapChain()
 	{
 		BGFX_PROFILER_SCOPE("SwapChainVK::releaseSwapChain", kColorFrame);
+
+		if (isLowLatency() )
+		{
+			s_renderVK->setLowLatencySwapChain(VK_NULL_HANDLE);
+		}
 
 		for (uint32_t ii = 0; ii < BX_COUNTOF(m_backBufferColorImageView); ++ii)
 		{
@@ -9108,6 +9801,108 @@ VK_DESTROY
 		return idx;
 	}
 
+	TextureFormat::Enum SwapChainVK::findSurfaceFormat(TextureFormat::Enum _format, VkColorSpaceKHR _colorSpace, bool _srgb)
+	{
+		BGFX_PROFILER_SCOPE("SwapChainVK::findSurfaceFormat", kColorFrame);
+
+		const VkPhysicalDevice physicalDevice = s_renderVK->m_physicalDevice;
+
+		uint32_t numSurfaceFormats;
+		VkResult result = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, m_surface, &numSurfaceFormats, NULL);
+
+		if (VK_SUCCESS != result
+		||  0 == numSurfaceFormats)
+		{
+			BX_TRACE("findSurfaceFormat error: vkGetPhysicalDeviceSurfaceFormatsKHR failed %d: %s.", result, getName(result) );
+			return _format;
+		}
+
+		VkSurfaceFormatKHR* surfaceFormats = (VkSurfaceFormatKHR*)BX_STACK_ALLOC(numSurfaceFormats * sizeof(VkSurfaceFormatKHR) );
+		result = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, m_surface, &numSurfaceFormats, surfaceFormats);
+
+		if (VK_SUCCESS != result)
+		{
+			BX_TRACE("findSurfaceFormat error: vkGetPhysicalDeviceSurfaceFormatsKHR failed %d: %s.", result, getName(result) );
+			return _format;
+		}
+
+		if (1 == numSurfaceFormats
+		&&  VK_FORMAT_UNDEFINED == surfaceFormats[0].format)
+		{
+			return _format;
+		}
+
+		const TextureFormat::Enum preferredFormats[] =
+		{
+			_format,
+			TextureFormat::BGRA8,
+			TextureFormat::RGBA8,
+		};
+
+		for (uint32_t ii = 0; ii < BX_COUNTOF(preferredFormats); ++ii)
+		{
+			const TextureFormat::Enum format = preferredFormats[ii];
+
+			if (TextureFormat::Count == format)
+			{
+				continue;
+			}
+
+			const VkFormat vkFormat = _srgb
+				? s_textureFormat[format].m_fmtSrgb
+				: s_textureFormat[format].m_fmt
+				;
+
+			if (VK_FORMAT_UNDEFINED == vkFormat)
+			{
+				continue;
+			}
+
+			for (uint32_t jj = 0; jj < numSurfaceFormats; ++jj)
+			{
+				if (_colorSpace == surfaceFormats[jj].colorSpace
+				&&  vkFormat    == surfaceFormats[jj].format)
+				{
+					BX_WARN(format == _format
+						, "findSurfaceFormat: Surface format %s is not supported, using %s instead."
+						, TextureFormat::Count == _format ? "Count" : bimg::getName(bimg::TextureFormat::Enum(_format) )
+						, bimg::getName(bimg::TextureFormat::Enum(format) )
+						);
+					return format;
+				}
+			}
+		}
+
+		for (uint32_t jj = 0; jj < numSurfaceFormats; ++jj)
+		{
+			if (_colorSpace != surfaceFormats[jj].colorSpace)
+			{
+				continue;
+			}
+
+			for (uint32_t ii = TextureFormat::Unknown+1; ii < TextureFormat::UnknownDepth; ++ii)
+			{
+				const VkFormat vkFormat = _srgb
+					? s_textureFormat[ii].m_fmtSrgb
+					: s_textureFormat[ii].m_fmt
+					;
+
+				if (VK_FORMAT_UNDEFINED != vkFormat
+				&&  vkFormat == surfaceFormats[jj].format)
+				{
+					BX_TRACE("findSurfaceFormat: Surface format %s is not supported, using %s instead."
+						, TextureFormat::Count == _format ? "Count" : bimg::getName(bimg::TextureFormat::Enum(_format) )
+						, bimg::getName(bimg::TextureFormat::Enum(ii) )
+						);
+					return TextureFormat::Enum(ii);
+				}
+			}
+		}
+
+		BX_TRACE("findSurfaceFormat error: No supported surface format found.");
+		return TextureFormat::Count;
+	}
+
 	bool SwapChainVK::acquire(VkCommandBuffer _commandBuffer, bool _block)
 	{
 		BGFX_PROFILER_SCOPE("SwapChainVK::acquire", kColorFrame);
@@ -9128,6 +9923,7 @@ VK_DESTROY
 			VkResult result;
 			{
 				BGFX_PROFILER_SCOPE("vkAcquireNextImageKHR", kColorFrame);
+				LowLatencyScope lowLatencyScope(*this);
 
 				result = vkAcquireNextImageKHR(
 					  device
@@ -9238,9 +10034,25 @@ VK_DESTROY
 				pi.pNext = &presentModeInfo;
 			}
 
+			VkPresentIdKHR presentId;
+			const uint64_t lowLatencyPresentId = s_renderVK->m_lowLatencyPresentId;
+
+			if (isLowLatency()
+			&&  0 != lowLatencyPresentId)
+			{
+				presentId.sType = VK_STRUCTURE_TYPE_PRESENT_ID_KHR;
+				presentId.pNext = pi.pNext;
+				presentId.swapchainCount = 1;
+				presentId.pPresentIds    = &lowLatencyPresentId;
+
+				pi.pNext = &presentId;
+				s_renderVK->m_lowLatencyPresentId = 0;
+			}
+
 			VkResult result;
 			{
 				BGFX_PROFILER_SCOPE("vkQueuePresentHKR", kColorFrame);
+				LowLatencyScope lowLatencyScope(*this);
 
 				result = vkQueuePresentKHR(m_queue, &pi);
 			}
@@ -10615,6 +11427,7 @@ VK_DESTROY
 
 					submitUniformCache(ucs, view);
 					submitBlit(bs, view);
+					currentPipeline = VK_NULL_HANDLE;
 
 					BGFX_VK_PROFILER_END();
 					formatViewName(viewName, _render, view, " ");
@@ -10830,6 +11643,7 @@ VK_DESTROY
 					{
 						submitUniformCache(ucs, view);
 						submitBlit(bs, view);
+						currentPipeline = VK_NULL_HANDLE;
 					}
 
 					// renderpass external subpass dependencies handle graphics -> compute and compute -> graphics
@@ -10899,6 +11713,7 @@ VK_DESTROY
 						bx::HashMurmur2A hash;
 						hash.begin();
 						hash.add(program.m_descriptorSetLayout);
+						hash.add(program.m_msaaMask);
 						hash.add(bindIdx);
 						hash.add(sbo.buffer);
 						hash.add(vsSize);
@@ -11259,6 +12074,7 @@ VK_DESTROY
 						bx::HashMurmur2A hash;
 						hash.begin();
 						hash.add(program.m_descriptorSetLayout);
+						hash.add(program.m_msaaMask);
 						hash.add(bindIdx);
 						hash.add(sbo.buffer);
 						hash.add(vsSize);
@@ -11566,6 +12382,12 @@ VK_DESTROY
 		bx::memCopy(perfStats.numPrims, statsNumPrimsRendered, sizeof(perfStats.numPrims) );
 		perfStats.gpuMemoryMax  = gpuMemoryAvailable;
 		perfStats.gpuMemoryUsed = gpuMemoryUsed;
+
+		LatencyReport latencyReport;
+		if (getLatencyReport(latencyReport) )
+		{
+			setLatencyStats(perfStats, latencyReport);
+		}
 
 		if (_render->m_debug & (BGFX_DEBUG_IFH|BGFX_DEBUG_STATS) )
 		{

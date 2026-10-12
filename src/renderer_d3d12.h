@@ -42,7 +42,11 @@ extern "C" struct PIXEventsThreadInfo* WINAPI bgfx_PIXGetThreadInfo();
 extern "C" uint64_t                    WINAPI bgfx_PIXEventsReplaceBlock(PIXEventsThreadInfo* _threadInfo, bool _getEarliestTime);
 #	endif // BX_PLATFORM_WINDOWS
 
+BX_PRAGMA_DIAGNOSTIC_PUSH();
+BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wundef");
+BX_PRAGMA_DIAGNOSTIC_IGNORED_CLANG_GCC("-Wunused-but-set-variable");
 #	include <pix3.h>
+BX_PRAGMA_DIAGNOSTIC_POP();
 
 #	define _PIX3_BEGINEVENT(_commandList, _color, _name) PIXBeginEvent(_commandList, toPixColor(_color), _name)
 #	define _PIX3_SETMARKER(_commandList, _color, _name)  PIXSetMarker(_commandList, toPixColor(_color), _name)
@@ -589,7 +593,7 @@ namespace bgfx { namespace d3d12
 		uint64_t kick();
 		void finish(uint64_t _waitFence = UINT64_MAX, bool _finishAll = false);
 		bool tryFinish(uint64_t _waitFence);
-		void release(ID3D12Resource* _ptr);
+		void release(IUnknown* _ptr);
 		bool consume(uint32_t _ms = UINT32_MAX);
 
 		void addExternal(TextureHandle _handle);
@@ -645,7 +649,7 @@ namespace bgfx { namespace d3d12
 		uint64_t m_completedFence;
 		ID3D12Fence* m_fence;
 		CommandList m_commandList[kMaxCommandLists];
-		typedef stl::vector<ID3D12Resource*> ResourceArray;
+		typedef stl::vector<IUnknown*> ResourceArray;
 		ResourceArray m_release[kMaxCommandLists];
 		typedef stl::vector<TextureHandle> ExternalTextureArray;
 		ExternalTextureArray m_external;

@@ -2690,7 +2690,17 @@ static_assert(BX_COUNTOF(s_accessNames) == Access::Count, "Invalid s_accessNames
 
 					if (!stencilOnly)
 					{
+						const bool resolve = true
+							&& NULL != texture.m_ptrMsaa
+							&& 0 == (texture.m_flags & BGFX_TEXTURE_RT_WRITE_ONLY)
+							;
+
 						_renderPassDescriptor->depthAttachment()->setTexture(ptr);
+						_renderPassDescriptor->depthAttachment()->setResolveTexture(resolve
+							? texture.m_ptr
+							: NULL
+							);
+						_renderPassDescriptor->depthAttachment()->setDepthResolveFilter(MTL::MultisampleDepthResolveFilterSample0);
 
 						setAttachment( (MTL::RenderPassAttachmentDescriptor*)_renderPassDescriptor->depthAttachment(), frameBuffer.m_depthAttachment, texture.m_type, NULL != texture.m_ptrMsaa);
 					}
@@ -6454,7 +6464,10 @@ static_assert(BX_COUNTOF(s_accessNames) == Access::Count, "Invalid s_accessNames
 										? MTL::LoadActionClear
 										: MTL::LoadActionLoad)
 										;
-									depthAttachment->setStoreAction(MTL::StoreActionStore);
+									depthAttachment->setStoreAction(NULL != depthAttachment->resolveTexture()
+										? (m_hasStoreActionStoreAndMultisampleResolve ? MTL::StoreActionStoreAndMultisampleResolve : MTL::StoreActionMultisampleResolve)
+										: MTL::StoreActionStore
+										);
 								}
 
 								MTL::RenderPassStencilAttachmentDescriptor* stencilAttachment = renderPassDescriptor->stencilAttachment();
@@ -6495,7 +6508,10 @@ static_assert(BX_COUNTOF(s_accessNames) == Access::Count, "Invalid s_accessNames
 								if (NULL != depthAttachment->texture() )
 								{
 									depthAttachment->setLoadAction(MTL::LoadActionLoad);
-									depthAttachment->setStoreAction(MTL::StoreActionStore);
+									depthAttachment->setStoreAction(NULL != depthAttachment->resolveTexture()
+										? (m_hasStoreActionStoreAndMultisampleResolve ? MTL::StoreActionStoreAndMultisampleResolve : MTL::StoreActionMultisampleResolve)
+										: MTL::StoreActionStore
+										);
 								}
 
 								MTL::RenderPassStencilAttachmentDescriptor* stencilAttachment = renderPassDescriptor->stencilAttachment();

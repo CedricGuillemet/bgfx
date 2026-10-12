@@ -232,6 +232,13 @@
 			VK_IMPORT_DEVICE_FUNC(true,  vkCmdDrawIndexedIndirectCountKHR);           \
 			/* VK_KHR_fragment_shading_rate */                                        \
 			VK_IMPORT_DEVICE_FUNC(true, vkCmdSetFragmentShadingRateKHR);              \
+			/* VK_NV_low_latency2 */                                                  \
+			VK_IMPORT_DEVICE_FUNC(true,  vkSetLatencySleepModeNV);                    \
+			VK_IMPORT_DEVICE_FUNC(true,  vkLatencySleepNV);                           \
+			VK_IMPORT_DEVICE_FUNC(true,  vkSetLatencyMarkerNV);                       \
+			VK_IMPORT_DEVICE_FUNC(true,  vkGetLatencyTimingsNV);                      \
+			/* 1.2 */                                                                 \
+			VK_IMPORT_DEVICE_FUNC(true,  vkWaitSemaphores);                           \
 			/* VK_KHR_video_queue / VK_KHR_video_decode_queue */                      \
 			VK_IMPORT_DEVICE_FUNC(true, vkCmdBeginVideoCodingKHR);                    \
 			VK_IMPORT_DEVICE_FUNC(true, vkCmdEndVideoCodingKHR);                      \
@@ -530,6 +537,7 @@ VK_DESTROY_FUNC(DescriptorSet);
 	struct TextureBindInfo
 	{
 		VkImageViewType type;
+		bool msaa;
 	};
 
 	struct ShaderVK
@@ -594,6 +602,7 @@ VK_DESTROY_FUNC(DescriptorSet);
 
 		TextureBindInfo m_textures[BGFX_CONFIG_MAX_TEXTURE_SAMPLERS];
 		uint8_t m_numTextures;
+		uint32_t m_msaaMask;
 
 		PredefinedUniform m_predefined[PredefinedUniform::Count * 2];
 		uint8_t m_numPredefined;
@@ -726,7 +735,7 @@ VK_DESTROY_FUNC(DescriptorSet);
 		void copyBufferToTexture(VkCommandBuffer _commandBuffer, VkBuffer _stagingBuffer, uint32_t _bufferImageCopyCount, VkBufferImageCopy* _bufferImageCopy);
 		void setState(VkCommandBuffer _commandBuffer, VkImageLayout _newImageLayout, bool _singleMsaaImage = false);
 
-		VkResult createView(uint32_t _layer, uint32_t _numLayers, uint32_t _mip, uint32_t _numMips, VkImageViewType _type, VkImageAspectFlags _aspectMask, bool _renderTarget, ::VkImageView* _view, VkFormat _format = VK_FORMAT_UNDEFINED) const;
+		VkResult createView(uint32_t _layer, uint32_t _numLayers, uint32_t _mip, uint32_t _numMips, VkImageViewType _type, VkImageAspectFlags _aspectMask, bool _renderTarget, ::VkImageView* _view, VkFormat _format = VK_FORMAT_UNDEFINED, bool _msaa = false) const;
 
 		VkFormat getViewFormat(uint32_t _flags, uint32_t _bit) const;
 
@@ -811,6 +820,8 @@ VK_DESTROY_FUNC(DescriptorSet);
 		void transitionImage(VkCommandBuffer _commandBuffer);
 
 		bool hasDepthStencil() const { return VK_NULL_HANDLE != m_backBufferDepthStencilImageView; }
+
+		bool isLowLatency() const;
 
 		VkQueue m_queue;
 		VkSwapchainCreateInfoKHR m_sci;
